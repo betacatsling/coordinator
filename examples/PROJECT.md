@@ -1,10 +1,9 @@
 # Example project
 
-<!-- delegation:input -->
-Goal: Create a small text file explaining this project's purpose.
-Allowed work: Only create PURPOSE.txt inside this workspace.
-Acceptance: PURPOSE.txt contains a concise paragraph; report the file checked.
-Feedback: Keep this step small. Do not install dependencies or use network.
-<!-- /delegation:input -->
+## Create a sum helper
+Create sum_numbers.py with sum_numbers(values). Check empty, positive and negative lists using Python assertions. Use only the standard library.
 
-Human notes outside the input block do not trigger work.
+## Create a runnable example
+Create example.py importing sum_numbers. Run it and verify that the sum of [2, 3, 5] prints 10.
+
+## 执行报告

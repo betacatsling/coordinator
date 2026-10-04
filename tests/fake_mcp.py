@@ -1,5 +1,6 @@
 """Deterministic MCP fixture; never invokes a model."""
 import json
+import os
 import sys
 for line in sys.stdin:
     msg = json.loads(line)
@@ -9,10 +10,15 @@ for line in sys.stdin:
     if method == 'initialize':
         result = {'protocolVersion': '2025-06-18', 'capabilities': {}, 'serverInfo': {'name': 'fixture', 'version': '1'}}
     elif method == 'tools/list':
-        result = {'tools': [{'name': n} for n in ['codex-start','codex-reply-start','codex-status','codex-result']]}
+        result = {'tools': [{'name': n} for n in ['codex-thread-read','codex-reply-start','codex-status','codex-result']]}
     else:
         name = msg['params']['name']
-        if name in ('codex-start','codex-reply-start'):
+        if name == 'codex-start':
+            raise AssertionError('Watcher must never create a coordinator')
+        if name == 'codex-thread-read':
+            status = 'idle' if msg['params']['arguments']['threadId'] == 'fixture-loaded' else 'notLoaded'
+            data = {'thread': {'cwd': os.getcwd(), 'status': {'type': status}}}
+        elif name == 'codex-reply-start':
             data = {'jobId': 'fixture-job', 'cursor': 0}
         elif name == 'codex-status':
             data = {'state': 'completed', 'threadId': 'fixture-thread', 'cursor': 1}

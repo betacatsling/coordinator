@@ -31,16 +31,65 @@ class WatchTests(unittest.TestCase):
         for text in [w.BEGIN, w.END+w.BEGIN, w.BEGIN+w.BEGIN+w.END]:
             self.doc.write_text(text)
             with self.assertRaises(ValueError): w.read_input(self.doc)
+    def test_h2_tasks_exclude_fences_reports_and_duplicates(self):
+        text = '# Project\n## First\nDo one thing.\n```text\n## Not a task\n```\n## Second\nDo two.\n## 执行报告\n- [Report](reports/example.html)\n'
+        self.assertEqual([t['title'] for t in w.parse_tasks(text)], ['First', 'Second'])
+        self.doc.write_text(text)
+        before = w.read_input(self.doc)
+        self.doc.write_text(text+'Another report line\n')
+        self.assertEqual(before, w.read_input(self.doc))
+        with self.assertRaises(ValueError): w.parse_tasks('## Same\nA\n## Same\nB')
+    def test_task_deduplication(self):
+        self.doc.write_text('## One\nA\n## Two\nB\n')
+        tasks = w.task_changes(self.doc, {})
+        state = {'task_hashes': {t['id']: t['hash'] for t in tasks}}
+        self.assertEqual(w.task_changes(self.doc, state), [])
+        self.doc.write_text('## One\nChanged\n## Two\nB\n')
+        self.assertEqual([t['title'] for t in w.task_changes(self.doc, state)], ['One'])
+    def test_inbox_never_starts_model(self):
+        self.doc.write_text('## One\nA\n## Two\nB\n')
+        cmd = [sys.executable, str(ROOT/'scripts/watch_project.py'), '--project', str(self.root), '--run-current', '--node', '/does/not/exist']
+        with open(self.root/'process.log', 'w') as log:
+            proc = subprocess.Popen(cmd, stdout=log, stderr=log)
+            start = time.monotonic()
+            pending = self.root/'.project-delegation/pending.json'
+            try:
+                while not pending.exists() and time.monotonic()-start < 14:
+                    if proc.poll() is not None: self.fail((self.root/'process.log').read_text())
+                    time.sleep(.1)
+                self.assertEqual(len(json.loads(pending.read_text())['tasks']), 2)
+                events = (self.root/'.project-delegation/events.jsonl').read_text()
+                self.assertNotIn('"event": "dispatch"', events)
+                self.assertNotIn('"event": "job"', events)
+            finally:
+                proc.terminate(); proc.wait(timeout=5)
+    def test_loaded_binding_blocks_without_replacement(self):
+        cmd = [sys.executable, str(ROOT/'scripts/watch_project.py'), '--project', str(self.root), '--run-current',
+               '--node', sys.executable, '--server', str(ROOT/'tests/fake_mcp.py'),
+               '--html-cli', str(ROOT/'tests/fake_renderer.py'), '--thread-id', 'fixture-loaded']
+        with open(self.root/'process.log', 'w') as log:
+            proc = subprocess.Popen(cmd, stdout=log, stderr=log)
+            start = time.monotonic(); event_path = self.root/'.project-delegation/events.jsonl'
+            try:
+                while time.monotonic()-start < 14:
+                    events = [json.loads(x) for x in event_path.read_text().splitlines()] if event_path.exists() else []
+                    if any(e['event'] == 'error' for e in events): break
+                    time.sleep(.1)
+                error = next(e for e in events if e['event'] == 'error')
+                self.assertIn('refusing to take over', error['error'])
+                self.assertFalse(any(e['event'] == 'job' for e in events))
+            finally:
+                proc.terminate(); proc.wait(timeout=5)
     def test_append_and_recover(self):
         original = self.doc.read_text()
         record = {'relative_path':'reports/example.html','date':'fixture date','description':'Example'}
         self.assertTrue(w.append_report_link(self.doc, record))
         self.assertTrue(w.append_report_link(self.doc, record))
-        self.assertEqual(self.doc.read_text().count('<!-- delegation:report '), 1)
+        self.assertEqual(self.doc.read_text().count('](reports/example.html)'), 1)
         self.assertTrue(self.doc.read_text().startswith(original))
         self.doc.write_text(original)  # stale editor save
         self.assertTrue(w.append_report_link(self.doc, record))
-        self.assertEqual(self.doc.read_text().count('<!-- delegation:report '), 1)
+        self.assertEqual(self.doc.read_text().count('](reports/example.html)'), 1)
     def test_publish_renderer_and_idempotency(self):
         folder=self.root/'.project-delegation'; folder.mkdir()
         state={}
@@ -54,12 +103,12 @@ class WatchTests(unittest.TestCase):
         with open(self.root/'fixture.log','w') as log:
             client=w.MCP([sys.executable,str(ROOT/'tests/fake_mcp.py')],self.root,log)
             try:
-                self.assertEqual(client.call('codex-start',{})['jobId'],'fixture-job')
+                self.assertEqual(client.call('codex-reply-start',{})['jobId'],'fixture-job')
             finally: client.close()
     def test_real_debounce_loop_with_fake_mcp(self):
         cmd=[sys.executable,str(ROOT/'scripts/watch_project.py'),'--project',str(self.root),
              '--node',sys.executable,'--server',str(ROOT/'tests/fake_mcp.py'),
-             '--html-cli',str(ROOT/'tests/fake_renderer.py'),'--run-current']
+             '--html-cli',str(ROOT/'tests/fake_renderer.py'),'--run-current','--thread-id','fixture-thread']
         with open(self.root/'process.log','w') as log:
             proc=subprocess.Popen(cmd,stdout=log,stderr=log)
             start=time.monotonic()

@@ -2,7 +2,9 @@
 
 Codex 项目协调 skill，以及本地 `PROJECT.md` 文件监听器。[English](README.md)
 
-修改文档中的输入区，连续 **10 秒** 没有新修改后，监听器通过外部 mcp-agents 启动独立 coordinator。它保存并复用 thread，执行期间将修改合并为最新一版，并用 answer-me-with-html 生成持久报告，在文档底部追加带日期的相对链接。
+每个唯一 `##` 标题下面写一个自然语言任务。连续 **10 秒** 没有修改后，监听器默认只写待处理队列，不调用模型。显式 `--thread-id` 绑定合格的已有 MCP thread 才执行；监听器不会创建 coordinator。执行结果生成 HTML，在文档中追加日期链接。
+
+查看[两任务示例](examples/simple-two-task-demo/PROJECT.md)、[脱敏报告 HTML 源码/下载](examples/simple-two-task-demo/reports/report.html)和[可运行代码](examples/simple-two-task-demo/example.py)。GitHub 展示 HTML 源码，下载后可本地打开。
 
 ## 依赖与安装
 
@@ -33,7 +35,9 @@ python3 scripts/watch_project.py --project /absolute/path/to/workspace
 
 默认只响应后续输入修改；加 `--run-current` 可在 10 秒静默后提交当前内容。可用 `--server`、`--html-cli`、`--node` 指定路径，也可用上述环境变量及 `PROJECT_DELEGATION_NODE`。监听器有自己的 stdio MCP 连接，不会配置桌面 MCP。
 
-只有一对 `delegation:input` 标记之间的内容触发执行。输入以外的笔记、报告和链接更新不触发。执行期间修改只保留最新输入；相同哈希去重，失败不自动重试。手动协调遵循 skill 中的 executor 简报和文件所有权；监听器每次执行一个有界步骤，禁止递归派发。
+默认命令只写 `.project-delegation/pending.json`，不会自动送入当前 UI session；队列模式不需要 bridge 或 renderer。加 `--thread-id EXISTING_THREAD_ID` 只能继续同工作目录、未加载且 MCP 可访问的已有 thread。绑定不可用、已加载或目录不符时阻塞，不创建替代 coordinator。当前没有 UI 自动投递适配器。
+
+唯一 H2 标题标识任务，改标题视为新任务；成功完成且未变化的任务跳过。代码围栏中的标题及 `## 执行报告` 不算任务。旧 `delegation:input` 标记仍兼容。执行期间修改合并为最新输入，失败不自动重试。手动协调遵循 executor 简报和文件所有权；监听器执行有界步骤，禁止递归派发。
 
 HTML 历史存于 `reports/`，文档底部追加日期链接；`DELEGATION-RESULTS.md` 是辅助最新文本记录。`.project-delegation/` 保存 thread、日志和报告索引。编辑器旧版本覆盖链接后，监听器可从索引恢复。报告、状态和日志可能包含敏感项目内容，请勿直接提交。
 
@@ -45,9 +49,9 @@ Ctrl-C 或 SIGTERM 停止自己启动的监听器。关闭其私有 MCP 连接�
 
 ## 真实限制
 
-这是本地文件触发的独立 coordinator。**ChatGPT 侧栏 Page/Canvas 不会自动映射成此文件**；需要真实文件映射或获授权的事件适配器。相对链接能否点击取决于前端。
+这是本地文件监听与待处理队列。显式绑定可继续合格的已有 MCP thread。**ChatGPT 侧栏 Page/Canvas 不会自动映射成此文件**；需要真实文件映射或获授权的事件适配器。相对链接能否点击取决于前端。
 
-监听器必须持续运行；thread 可持久复用，job 仅在连接内有效。审批策略是 `on-request`，监听器不能自动批准请求；停止后在交互审批界面处理。提示词要求 coordinator 不使用网络、不安装依赖、不改认证/设置及监听器输出，但提示词不构成安全边界，仍以实际沙箱和宿主策略为准。
+监听器必须持续运行；旧状态中的 thread 不会自动续接，必须显式 `--thread-id`；job 仅在连接内有效。审批策略是 `on-request`，监听器不能自动批准请求；停止后在交互审批界面处理。提示词要求 coordinator 不使用网络、不安装依赖、不改认证/设置及监听器输出，但提示词不构成安全边界，仍以实际沙箱和宿主策略为准。
 
 文件事件不能判断修改者身份。追加报告会检查原子替换，但不能对任意并发原地写入提供事务保证。
 
@@ -58,6 +62,6 @@ python3 -m unittest discover -s tests -v
 python3 scripts/scan_release.py
 ```
 
-测试覆盖输入范围、报告恢复、renderer 调用、MCP 封装，以及使用假 MCP fixture 的实际 10 秒监听循环；**不能声称这些是模型实测**。主实现任务另有三轮真实 MCP 验证，属于当时环境的结果，详情见 [VALIDATION.md](VALIDATION.md)。
+测试覆盖任务解析去重、旧标记兼容、报告恢复、renderer 调用、MCP 封装、默认队列和假 MCP 显式绑定；**不能声称这些是模型实测**。主实现任务另有本次两任务真实 MCP 验证与 HTML 渲染，属于当时环境的结果，详情见 [VALIDATION.md](VALIDATION.md)。
 
 自有 skill/胶水代码采用 [MIT](LICENSE)。第三方依赖保留各自许可，见 [THIRD_PARTY.md](THIRD_PARTY.md)。此项目独立于 OpenAI 官方产品。
