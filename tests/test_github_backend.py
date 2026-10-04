@@ -10,11 +10,13 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from github_project_inputs import normalize_project
-from github_writeback import write_result, is_result_comment
+from github_writeback import write_result, write_claim, is_result_comment, is_workflow_comment
 from issue_worktree import create, inspect, validate_paths, git
 from project_acpx import Coordinator
+from github_board import assert_claimable
 
 class BackendTests(unittest.TestCase):
     def setUp(self):
@@ -53,6 +55,56 @@ class BackendTests(unittest.TestCase):
             self.calls=[]
             with self.assertRaises(ValueError):write_result(c,t,p,'ok',{},True,self.gh,False)
             self.assertFalse(any(q.startswith('mutation') for q,v in self.calls))
+    def test_claim_dryrun_retry_and_no_revision_feedback(self):
+        self.c['writeback']['status'].update(claimed_option_id='ready',claimed_option_name='Review')
+        preview=write_claim(self.c,self.task,self.project,self.gh,True)
+        self.assertEqual([o['operation'] for o in preview['operations']],['set_status','add_comment'])
+        self.assertFalse(any(q.startswith('mutation') for q,v in self.calls))
+        first=write_claim(self.c,self.task,self.project,self.gh,False)
+        self.assertEqual(first['comment_id'],'C')
+        comment=self.project['items']['nodes'][0]['content']['comments']['nodes'][0]
+        self.assertIn('已领取',comment['body']);self.assertIn(self.task['revision_hash'][:12],comment['body'])
+        self.assertTrue(is_workflow_comment(comment['body'],self.c,'I'))
+        self.calls=[];again=write_claim(self.c,self.task,self.project,self.gh,False)
+        self.assertEqual(again['operations'],[]);self.assertFalse(any(q.startswith('mutation') for q,v in self.calls))
+        result_preview=write_result(self.c,self.task,self.project,'done',{},True,self.gh,True)
+        self.assertEqual(result_preview['operations'][0]['operation'],'add_comment')
+        # Scanner rediscovers claim even if local comment receipts were lost.
+        obj=Coordinator.__new__(Coordinator);obj.config=self.c;obj.state={'queue':[{'task':self.task,'status':'running'}],'result_comment_ids':[]};obj.save=lambda:None
+        with patch('project_acpx.fetch',return_value=self.project):obj.scan()
+        self.assertEqual(len(obj.state['queue']),1);self.assertEqual(obj.state['result_comment_ids'],['C'])
+
+    def test_only_admission_posts_and_invalid_scope_blocks(self):
+        self.c.update(source={'type':'github'});self.c['writeback'].update(enabled=True,dry_run=False)
+        self.c['writeback']['status'].update(claimed_option_id='ready',claimed_option_name='Review')
+        obj=Coordinator.__new__(Coordinator);obj.config=self.c;obj.state={'queue':[],'result_comment_ids':[]};obj.save=lambda:None;obj.verify=lambda:None
+        with patch('project_acpx.fetch',return_value=self.project),patch('project_acpx.gh',side_effect=self.gh) as api:
+            obj.scan();self.assertEqual(obj.state['queue'][0]['status'],'pending');api.assert_not_called()
+            self.assertTrue(obj.admit(0));self.assertEqual(obj.state['queue'][0]['status'],'running');self.assertEqual(obj.state['queue'][0]['claim']['comment_id'],'C')
+            with self.assertRaises(ValueError):obj.admit(0)
+        self.calls=[];obj.state={'queue':[{'task':self.task,'status':'pending'}],'result_comment_ids':[]}
+        invalid=copy.deepcopy(self.project);invalid['id']='wrong'
+        with patch('project_acpx.fetch',return_value=invalid),patch('project_acpx.gh',side_effect=self.gh):self.assertFalse(obj.admit(0))
+        self.assertEqual(obj.state['queue'][0]['status'],'blocked');self.assertFalse(any(q.startswith('mutation') for q,v in self.calls))
+
+    def test_board_ready_transition_dispatches_baseline_and_dedupes(self):
+        c=copy.deepcopy(self.c);c['board']={'view_id':'V','view_filter':'-类型:"项目跟踪"','status_field_id':'S','ready_option_id':'todo','ready_option_name':'待做','type_field_id':'T','excluded_type_option_id':'tracking','excluded_type_option_name':'项目跟踪'}
+        p=copy.deepcopy(self.project);p['views']={'nodes':[{'id':'V','filter':c['board']['view_filter'],'layout':'BOARD_LAYOUT'}]}
+        p['fields']={'nodes':[{'id':'S','options':[{'id':'todo','name':'待做'}]},{'id':'T','options':[{'id':'tracking','name':'项目跟踪'}]}]}
+        values=[{'field':{'id':'S'},'optionId':'triage'},{'field':{'id':'T'},'optionId':'research'}];p['items']['nodes'][0]['fieldValues']={'nodes':values}
+        obj=Coordinator.__new__(Coordinator);obj.config=c;obj.state={'queue':[{'task':self.task,'status':'baseline'}],'result_comment_ids':[]};obj.save=lambda:None
+        with patch('project_acpx.fetch',return_value=p):
+            obj.scan();self.assertEqual(len(obj.state['queue']),1)
+            values[0]['optionId']='todo';obj.scan();self.assertEqual(len(obj.state['queue']),2)
+            queued=obj.state['queue'][1];self.assertEqual(queued['task']['revision_hash'],self.task['revision_hash']);self.assertEqual(queued['task']['ready_generation'],1)
+            obj.scan();self.assertEqual(len(obj.state['queue']),2)
+            assert_claimable(p,c,queued['task']);values[0]['optionId']='working';obj.scan();self.assertEqual(queued['status'],'superseded')
+            with self.assertRaises(ValueError):assert_claimable(p,c,queued['task'])
+            values[0]['optionId']='todo';obj.scan();self.assertEqual(len(obj.state['queue']),3);self.assertEqual(obj.state['queue'][2]['task']['ready_generation'],2)
+            values[1]['optionId']='tracking';obj.scan();self.assertEqual(obj.state['queue'][2]['status'],'superseded')
+            p['views']['nodes'][0]['filter']='';
+            with self.assertRaises(ValueError):obj.scan()
+
     def test_dirty_main_tree_preserved_and_scope_enforced(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);repo=root/'repo';repo.mkdir();git(repo,'init');git(repo,'config','user.name','Fixture');git(repo,'config','user.email','fixture@example.invalid')

@@ -48,3 +48,11 @@ Remaining deployment work is concrete private report access and explicit safe ha
 serve_reports.py matches the implementation source snapshot exactly (SHA256 b2ea9ee9df9701d1ef36c63bfba4a98d9c98bdfb9a8ec201d30f8c2f44afdfa5). Three temporary localhost tests cover GET/HEAD report bytes, rejection of a symlink escaping the selected directory, and parent/encoded-parent paths not exposing an outside fixture. Test listeners use ephemeral ports and are shut down after each case.
 
 No production service, report, address, binding, deployment record or verification record was copied or operated during this release work. The included commands are generic foreground examples. Authentication/TLS and reader access are not supplied by the helper; operator-selected transport and access checks remain necessary.
+
+## Board intake and candidate coordinator registration
+
+All fourteen stable files matched the private coordinator-integrated manifest before copying. That manifest and all production/QA records were excluded from publication. Private project names/paths in manual instructions were generalized; the registration test now generates a deterministic fixture UUID at runtime. Previously published generic report-helper instructions are retained.
+
+Source observations reported nineteen backend/board/ownership/registration tests passing on macOS and remote Linux, plus isolated exact-native-ID resumption across TTL. Release tests use temporary state, fake GitHub writes and adapter fixtures; they do not operate production or replay real registration. Coverage includes selected-board scope/pagination/type/status checks, ready generations, admission-only claims, lost-receipt claim deduplication, other-author marker handling, canonical ownership across state directories, runtime-only pending enrollment, changed/running-owner refusal and completed-native-ID proof requirements.
+
+The real user target was not enrolled and desktop visibility/synchronization was not verified. No completed production handoff is claimed. Runtime CODEX_THREAD_ID is an identity hint rather than cryptographic proof, and pending registration is not activation.

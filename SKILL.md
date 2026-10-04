@@ -52,8 +52,6 @@ Templates are optional project-level examples, not installation-time activation.
 
 ## GitHub Project backend
 
-Release scope: scoped comment/status writeback, current-revision/author checks, HTTP report-byte verification and per-Issue detached worktrees are included. Generic examples keep writeback/executors disabled and dry-run enabled. They do not activate production. Optional serve_reports.py binds only IPv4 loopback for a selected report directory; it does not install a service, provide authentication or start SSH forwarding. Private reader access and safe handoff from an existing watcher require concrete operator configuration and authorization. A verified local test endpoint is not an existing public report URL; static file/syntax checks do not prove behavioral correctness.
-
 For the selected repository and Project, follow [references/github-acpx.md](references/github-acpx.md) and `scripts/project_acpx.py`:
 
 1. Read Issue bodies and user comments from that Project and repository. Accept all labels and unlabelled Issues. Submitted versions enter the queue directly; there is no ten-second quiet condition or implicit Ready gate. Polling is ordinary API detection, not model waiting.
@@ -64,3 +62,9 @@ For the selected repository and Project, follow [references/github-acpx.md](refe
 Keep the old file watcher and native hooks as optional backends; they do not form part of the default GitHub loop. Do not change answer-me-with-html. Do not enable competing real-project watchers, copy credentials between hosts, expand permissions without authorization, or auto-approve unsafe actions.
 
 For the GitHub backend, use scoped idempotent write-back, exact live status mappings, verified private report-base URLs and per-Issue detached worktrees as described in `references/github-acpx.md`. Keep dry-run/default writes disabled until configured. Preserve dirty main-workspace files; a live legacy watcher blocks competing input ownership.
+
+When the user selects the TODO board, configure its verified view/Type/Status mapping; claim only 待做 cards and exclude 项目跟踪. Entering 待做 triggers admission even for baseline text. Only actual admitted slots post stable claim comments and move to 进行中; polling/queueing never do. See `references/github-acpx.md`.
+
+If the user chooses their current project session as coordinator, use [manual coordinator registration](references/manual-coordinator.md): runtime identity enrollment is pending, not activation. End the registration turn before a two-turn exact-native-ID ACP resume proof; then quiesce the old owner and commit under the shared lock without losing queue/baseline. Never claim desktop visibility or migrate merely from a user-supplied ID.
+
+Release validation covers isolated same-thread resumption and fixture ownership/admission checks. The real user target was not registered and UI visibility/synchronization was not verified. Do not describe these checks as a completed production handoff, and do not operate a production owner while preparing or publishing this skill.

@@ -36,8 +36,11 @@ def fetch(config):
     if config['source']['type']!='github':raise ValueError('Unknown source type')
     query="""query($id:ID!,$cursor:String){
       node(id:$id){... on ProjectV2{
-        id title url items(first:100,after:$cursor){
-          pageInfo{hasNextPage endCursor} nodes{id fieldValues(first:100){nodes{... on ProjectV2ItemFieldSingleSelectValue{optionId field{... on ProjectV2SingleSelectField{id}}}}} content{
+        id title url
+        views(first:100){pageInfo{hasNextPage} nodes{id name filter layout}}
+        fields(first:100){pageInfo{hasNextPage} nodes{... on ProjectV2SingleSelectField{id name options{id name}}}}
+        items(first:100,after:$cursor){
+          pageInfo{hasNextPage endCursor} nodes{id fieldValues(first:100){pageInfo{hasNextPage} nodes{... on ProjectV2ItemFieldSingleSelectValue{optionId field{... on ProjectV2SingleSelectField{id}}}}} content{
             __typename ... on Issue{
               id number title body url state author{login} repository{nameWithOwner}
               comments(first:100){pageInfo{hasNextPage endCursor} nodes{id body author{login}}}
@@ -68,18 +71,33 @@ class Coordinator:
     def __init__(self, config_path):
         self.config=json.loads(config_path.read_text());c=self.config
         self.workspace=Path(c['workspace']).resolve(strict=True)
-        self.folder=self.workspace/'.project-delegation/github-acpx';self.folder.mkdir(parents=True,exist_ok=True,mode=0o700)
-        self.lock=open(self.folder/'controller.lock','a');fcntl.flock(self.lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        self.path=self.folder/'state.json';self.ledger=self.folder/'provider.json'
-        self.state=json.loads(self.path.read_text()) if self.path.exists() else {'queue':[],'result_comment_ids':[]}
-        self.results=queue.Queue();self.active=None;self.stopped=threading.Event()
-        for key in ['node','acpx','adapter','codex','html_cli']:
-            if not Path(c[key]).is_file():raise ValueError('Missing explicit runtime path: '+key)
-        command=shlex.join([sys.executable,str(Path(__file__).with_name('acp_identity_guard.py').resolve()),'--ledger',str(self.ledger),'--node',c['node'],'--adapter',c['adapter']])
-        self.identity={'project_node_id':c['project_node_id'],'repository':c['repository'],'user_login':c['user_login'],'workspace':str(self.workspace),'agent_command':command}
-        if self.state.get('identity') and self.state['identity']!=self.identity:raise ValueError('Existing Project/repository/session scope differs; refusing replacement')
-        self.name='project-'+hashlib.sha256(c['project_node_id'].encode()).hexdigest()[:20]
-        self.env=dict(os.environ,CODEX_PATH=c['codex'])
+        backstage=(self.workspace/'.project-delegation').resolve()
+        if self.workspace not in backstage.parents:raise ValueError('Workspace backstage escapes through symlink')
+        self.folder=Path(c.get('state_directory',str(backstage/'github-acpx'))).resolve()
+        self.ledger=Path(c.get('provider_ledger',str(self.folder/'provider.json'))).resolve()
+        if backstage not in self.folder.parents or backstage not in self.ledger.parents:raise ValueError('Controller state/ledger must remain in selected workspace backstage')
+        self.folder.mkdir(parents=True,exist_ok=True,mode=0o700)
+        owner=backstage/'github-acpx';owner.mkdir(parents=True,exist_ok=True,mode=0o700)
+        self.lock=open(owner/'controller.lock','a')
+        try:fcntl.flock(self.lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except Exception:
+            self.lock.close();raise
+        try:
+            self.path=self.folder/'state.json'
+            self.state=json.loads(self.path.read_text()) if self.path.exists() else {'queue':[],'result_comment_ids':[]}
+            self.results=queue.Queue();self.active=None;self.stopped=threading.Event()
+            for key in ['node','acpx','adapter','codex','html_cli']:
+                if not Path(c[key]).is_file():raise ValueError('Missing explicit runtime path: '+key)
+            command=shlex.join([sys.executable,str(Path(__file__).with_name('acp_identity_guard.py').resolve()),'--ledger',str(self.ledger),'--node',c['node'],'--adapter',c['adapter']])
+            if c.get('agent_command'):
+                if shlex.split(c['agent_command'])!=shlex.split(command):raise ValueError('Registered agent command differs from explicit guarded runtime')
+                command=c['agent_command']
+            self.identity={'project_node_id':c['project_node_id'],'repository':c['repository'],'user_login':c['user_login'],'workspace':str(self.workspace),'agent_command':command}
+            if self.state.get('identity') and self.state['identity']!=self.identity:raise ValueError('Existing Project/repository/session scope differs; refusing replacement')
+            self.name='project-'+hashlib.sha256(c['project_node_id'].encode()).hexdigest()[:20]
+            self.env=dict(os.environ,CODEX_PATH=c['codex'])
+        except Exception:
+            self.lock.close();raise
 
     def save(self):
         atomic_write(self.path,json.dumps(self.state,ensure_ascii=False,indent=2)+'\n');os.chmod(self.path,0o600)
@@ -119,19 +137,23 @@ class Coordinator:
 
     def scan(self):
         project=fetch(self.config)
-        from github_writeback import is_result_comment
+        from github_writeback import is_workflow_comment
         for item in project['items']['nodes']:
             issue=item.get('content') or {}
             for comment in issue.get('comments',{}).get('nodes',[]):
-                if comment.get('author',{}).get('login','').lower()==self.config['user_login'].lower() and is_result_comment(comment.get('body',''),self.config,issue['id']):
+                if comment.get('author',{}).get('login','').lower()==self.config['user_login'].lower() and is_workflow_comment(comment.get('body',''),self.config,issue['id']):
                     if comment['id'] not in self.state['result_comment_ids']:self.state['result_comment_ids'].append(comment['id'])
         tasks=normalize_project(project,self.config['project_node_id'],self.config['user_login'],self.state['result_comment_ids'],self.config['repository'])
-        current={t['issue_id']:t['revision_hash'] for t in tasks}
+        if self.config.get('board'):
+            from github_board import select_tasks
+            tasks=select_tasks(project,self.config,tasks,self.state.setdefault('board_observations',{}))
+        key=lambda t:t.get('dispatch_key',t['revision_hash'])
+        current={t['issue_id']:key(t) for t in tasks}
         for entry in self.state['queue']:
-            if entry['status']=='pending' and current.get(entry['task']['issue_id'])!=entry['task']['revision_hash']:entry['status']='superseded'
-        known={(e['task']['issue_id'],e['task']['revision_hash']) for e in self.state['queue'] if e['status']!='superseded'}
+            if entry['status']=='pending' and current.get(entry['task']['issue_id'])!=key(entry['task']):entry['status']='superseded'
+        known={(e['task']['issue_id'],key(e['task'])) for e in self.state['queue'] if e['status']!='superseded'}
         for task in tasks:
-            if (task['issue_id'],task['revision_hash']) not in known:self.state['queue'].append({'task':task,'status':'pending','queued_at':time.time()})
+            if (task['issue_id'],key(task)) not in known:self.state['queue'].append({'task':task,'status':'pending','queued_at':time.time()})
         self.state['source_error']=None;self.save()
 
     def publish(self,entry,text):
@@ -202,7 +224,7 @@ class Coordinator:
                     if target!=self.workspace and self.workspace not in target.parents:raise ValueError('Executor must belong to selected repository workspace')
                     plan=self.parse_object(self.coordinate(prompt+'\nReturn ONLY JSON with assignment and owned_paths. Permitted owned_paths: '+json.dumps(executor['owned_paths'])+'. No implementation in this session.'))
                     if set(plan.get('owned_paths',[]))!=set(executor['owned_paths']) or not isinstance(plan.get('assignment'),str):raise ValueError('Coordinator assignment differs from configured file scope')
-                receipt_path=self.folder/('executor-'+task['revision_hash']+'.json')
+                receipt_path=self.folder/('executor-'+task.get('dispatch_key',task['revision_hash'])+'.json')
                 receipt=execute_assignment(plan['assignment'],executor,receipt_path,self.config['node'])
                 if receipt['status']!='verified':raise RuntimeError('Independent executor checks failed; inspect receipt')
                 if receipt.get('thread_id')==self.state['binding']['provider_thread_id']:raise RuntimeError('Executor reused coordinator identity')
@@ -234,6 +256,28 @@ class Coordinator:
             try:self.writeback(entry)
             except Exception as exc:entry['writeback_error']=str(exc);self.save()
 
+    def admit(self,index):
+        # Only one genuinely selected slot is claimed; scan/queue insertion never posts.
+        self.verify()
+        entry=self.state['queue'][index]
+        if entry['status']!='pending':raise ValueError('Only pending tasks can be admitted')
+        entry.update(status='running',started_at=time.time());self.save()
+        try:
+            settings=self.config.get('writeback',{})
+            if self.config['source']['type']=='github' and settings.get('enabled'):
+                from github_writeback import write_claim
+                live=fetch(self.config)
+                if self.config.get('board'):
+                    from github_board import assert_claimable
+                    assert_claimable(live,self.config,entry['task'])
+                claim=write_claim(self.config,entry['task'],live,gh,settings.get('dry_run',True))
+                entry['claim']=claim
+                if claim.get('comment_id') and claim['comment_id'] not in self.state['result_comment_ids']:self.state['result_comment_ids'].append(claim['comment_id'])
+                self.save()
+        except Exception as exc:
+            entry.update(status='blocked',claim_error=str(exc),error='Claim notification failed before execution: '+str(exc));self.save();return False
+        return True
+
     def run(self,once=False):
         legacy=self.workspace/'.project-delegation/state.json'
         if legacy.exists():
@@ -259,8 +303,8 @@ class Coordinator:
             if self.active is None and not self.state.get('source_error'):
                 index=next((i for i,e in enumerate(self.state['queue']) if e['status']=='pending'),None)
                 if index is not None:
-                    self.state['queue'][index].update(status='running',started_at=time.time());self.save()
-                    self.active=threading.Thread(target=self.work,args=(index,),daemon=True);self.active.start()
+                    if self.admit(index):
+                        self.active=threading.Thread(target=self.work,args=(index,),daemon=True);self.active.start()
                 elif once:return
             if once and self.state.get('source_error'):raise RuntimeError(self.state['source_error'])
             self.stopped.wait(.25)

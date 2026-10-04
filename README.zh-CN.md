@@ -16,6 +16,10 @@ coordinator 只派发并验收。显式配置 executor 时，独立 MCP executor
 
 另需已认证 GitHub CLI、独立安装的 acpx 0.19.4 和 @agentclientprotocol/codex-acp 2.1.1。使用显式运行路径，不复制认证或真实绑定状态。`init` 创建固定 coordinator；`once` 处理队列；`run` 持续 polling，Ctrl-C/SIGTERM 后等待已接纳回合结束再释放锁。补齐生产设置并检查其他输入所有者后，才启用真实事件循环。
 
+可选的明确待做看板会缩小输入范围：仅验证过的待做状态可领取，排除配置中的项目跟踪类型。视图过滤、字段和选项必须匹配真实值，变化或分页不完整即拒绝。进入待做状态产生去重的派发代次，历史基线正文也能触发；只有真正接纳的串行执行位才发布去重领取评论并设置对应进行中状态，polling 本身不领取。自己的领取/结果评论不变成新输入，见[看板说明](references/github-acpx.md#explicit-todo-board-intake-and-claim-notifications)。
+
+指定当前项目会话为候选 coordinator，见[手动登记和交接](references/manual-coordinator.md)。登记只读取确切工作目录内运行时的 `CODEX_THREAD_ID`，保持 pending。当前回合结束后，通过跨 TTL 的两次同 native ID 回复验证；明确交接还需原 owner 停止且无在途任务、取得 canonical 锁、旧绑定匹配及新鲜验证，保留队列/基线，不自动启动服务。隔离同线程 QA 通过；**真实用户目标未登记，桌面可见性/实时同步未验证**。不能据此宣称生产交接完成或允许两端同时操控。
+
 每个唯一 `##` 标题下面写一个自然语言任务。连续 **10 秒** 没有修改后，监听器默认只写待处理队列，不调用模型。显式 `--thread-id` 绑定合格的已有 MCP thread 才执行；监听器不会创建 coordinator。执行结果生成 HTML，在文档中追加日期链接。
 
 查看[两任务示例](examples/simple-two-task-demo/PROJECT.md)、[脱敏报告 HTML 源码/下载](examples/simple-two-task-demo/reports/report.html)和[可运行代码](examples/simple-two-task-demo/example.py)。GitHub 展示 HTML 源码，下载后可本地打开。

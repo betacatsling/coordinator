@@ -29,7 +29,7 @@ def create(repo, task, state_dir, owned_paths=None):
         dirty=git(repo,'diff','--name-only','HEAD').splitlines()+git(repo,'ls-files','--others','--exclude-standard').splitlines()
         if any(any(n==p or n.startswith(p.rstrip('/')+'/') for p in owned_paths) for n in dirty):raise ValueError('Issue scope overlaps uncommitted main-workspace files; preserve them and reconcile explicitly')
     root=Path(state_dir)/'worktrees';root.mkdir(parents=True,exist_ok=True)
-    key=hashlib.sha256((task['issue_id']+task['revision_hash']).encode()).hexdigest()[:24]
+    key=hashlib.sha256((task['issue_id']+task.get('dispatch_key',task['revision_hash'])).encode()).hexdigest()[:24]
     target=root/key
     if target.exists():raise ValueError('Task worktree already exists; inspect before explicit recovery')
     head=git(repo,'rev-parse','HEAD');git(repo,'worktree','add','--detach',str(target),head)
