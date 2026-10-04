@@ -64,3 +64,13 @@ All twenty-one files in the stable parallel manifest matched before copying. The
 The implementation task reported twenty-six backend/board/ownership/registration/pool tests passing on both hosts and two actual isolated Codex sessions overlapping and recovering their original IDs. The added release tests cover disjoint/overlapping path leases, shared resources, dependency readiness, updating an existing claim once with a task session, missing-claim refusal, fake worker overlap with serialized model callbacks, and an explicitly authorized revision batch. They do not start real sessions or select research work.
 
 This release only changes architecture: default three independent executor slots, serialized coordinator planning/acceptance, per-task persistent sessions, and waiting on conflicts/dependencies. No production research dispatch or user-selected coordinator handoff is claimed; real research task selection remains the user coordinator's responsibility.
+
+## One-sentence coordinator entry
+
+All twenty-four files matched the stable source manifest before the six changed entry/ownership files were copied. Private manifests were excluded. Test session literals were replaced by deterministic runtime-generated fixture UUIDs; private-name assertions were replaced by generic behavior assertions. Existing generic report instructions and tests are retained.
+
+The source task reported forty-nine source tests passing on macOS and remote Linux. Public release verification exercises binding discovery from temporary cwd/configuration/registry, runtime identity, active and pending reuse, ambiguity/missing/corrupt state, first-owner baselining, existing history preservation, lock/owner refusal and proof freshness. Tests mock external APIs and sessions and do not take over a real owner.
+
+Desktop natural-trigger end-to-end operation and real user takeover remain unverified. Production binding and tasks are unchanged. Pending enrollment remains distinct from activation; the current turn must end before external exact-ID verification. No production services, credentials, project content or private release records are published.
+
+Public macOS release validation: all 76 tests passed in 35.642 seconds using the bundled fake renderer and temporary localhost listeners. The conservative release scan passed; it is a heuristic, not a guarantee against every secret format. GitHub CI repeats these checks on Linux/Python 3.9.

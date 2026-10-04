@@ -20,7 +20,7 @@ coordinator 只派发并验收。显式配置 executor 时，独立 MCP executor
 
 独立 executor 现在可以重叠执行，`max_parallel_executors` 默认 3，范围 1–6；固定 coordinator 的规划和验收仍串行。每个任务保存自己的 native session、receipt 和工作区映射，后续恢复原身份；实际 executor ID 只更新到已有领取评论。文件/目录/共享资源冲突或依赖未满足时等待，不占实现槽位。[并行说明](references/github-acpx.md#parallel-persistent-codex-executors)区分离线 fixture 重叠与主实现的隔离真实会话 QA。本次只更新架构，不选择研究任务，也不证明实际研究已开始或用户 coordinator 交接完成。
 
-指定当前项目会话为候选 coordinator，见[手动登记和交接](references/manual-coordinator.md)。登记只读取确切工作目录内运行时的 `CODEX_THREAD_ID`，保持 pending。当前回合结束后，通过跨 TTL 的两次同 native ID 回复验证；明确交接还需原 owner 停止且无在途任务、取得 canonical 锁、旧绑定匹配及新鲜验证，保留队列/基线，不自动启动服务。隔离同线程 QA 通过；**真实用户目标未登记，桌面可见性/实时同步未验证**。不能据此宣称生产交接完成或允许两端同时操控。
+在目标项目会话说 **“你作为这个项目的 coordinator”** 即可使用[一句话入口](references/manual-coordinator.md)。入口从实际 cwd、Git 和已有配置解析绑定，只读取运行时 `CODEX_THREAD_ID`；用户不必粘贴命令、路径或 ID。复用已有 active/pending 身份；缺失或歧义绑定只返回具体阻碍或选择请求。登记仍为 pending，须当前回合结束、外部确切 ID 的 ACP 恢复证明及 idle 证据、加锁的首任激活或交接成功后才能接管。bootstrap 不启动服务、不派发真实任务。**桌面自然触发端到端流程和真实用户接管未验证。** 本次发布不改变生产 owner 或任务。
 
 每个唯一 `##` 标题下面写一个自然语言任务。连续 **10 秒** 没有修改后，监听器默认只写待处理队列，不调用模型。显式 `--thread-id` 绑定合格的已有 MCP thread 才执行；监听器不会创建 coordinator。执行结果生成 HTML，在文档中追加日期链接。
 

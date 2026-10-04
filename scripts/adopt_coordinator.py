@@ -118,29 +118,88 @@ def verify(config_path, registration):
     return verified
 
 
-def commit(config_path, registration, expected_old):
-    config_path, config, registration, receipt, folder = load_context(config_path, registration)
+def validate_proof(config, receipt, folder):
     proof = receipt.get('verification')
-    if not proof or time.time() - proof['verified_at'] > 900:
+    age = time.time() - proof.get('verified_at', 0) if proof else float('inf')
+    if not proof or not 0 <= age <= 900:
         raise ValueError('Fresh same-thread verification required before handoff')
+    provider = receipt['provider_thread_id']
+    if proof.get('provider_thread_id') != provider or proof.get('acpx_session_id') != provider:
+        raise ValueError('Proof native identity differs from enrollment')
+    if proof.get('session_name') != 'project-' + hashlib.sha256(config['project_node_id'].encode()).hexdigest()[:20]:
+        raise ValueError('Proof session name differs from Project binding')
+    ledger = Path(proof['provider_ledger']).resolve(strict=True)
+    ledger.relative_to(folder)
+    bound = json.loads(ledger.read_text())
+    if bound.get('creation') != 'bound' or bound.get('provider_thread_id') != provider:
+        raise ValueError('Proof ledger is not bound to the enrolled native thread')
+    expected = [sys.executable, str(Path(__file__).with_name('acp_identity_guard.py').resolve()),
+                '--ledger', str(ledger), '--node', config['node'], '--adapter', config['adapter']]
+    if shlex.split(proof['agent_command']) != expected:
+        raise ValueError('Proof guard command differs from the explicit installed runtime')
+    turns = proof.get('turns', [])
+    if len(turns) != 2 or any(t.get('provider_thread_id') != provider or t.get('stop_reason') != 'end_turn' or not t.get('nonce_matches') for t in turns):
+        raise ValueError('Two completed same-native continuity turns required')
+    return proof
+
+
+def initial_baseline(config, state):
+    """Read current Project once; preserve prior queue and suppress historical replay."""
+    from project_acpx import fetch
+    from github_project_inputs import normalize_project
+    project = fetch(config)
+    tasks = normalize_project(project, config['project_node_id'], config['user_login'],
+                              state.get('result_comment_ids', []), config['repository'])
+    if config.get('board'):
+        from github_board import select_tasks
+        selected = select_tasks(project, config, tasks, state.setdefault('board_observations', {}))
+        selected = {task['issue_id']: task for task in selected}
+        tasks = [selected.get(task['issue_id'], task) for task in tasks]
+    key = lambda task: (task['issue_id'], task.get('dispatch_key', task['revision_hash']))
+    queue = state.setdefault('queue', [])
+    known = {key(entry['task']) for entry in queue}
+    for task in tasks:
+        if key(task) not in known:
+            queue.append({'task': task, 'status': 'baseline', 'observed_at': time.time()})
+    state['baseline_at'] = time.time()
+
+
+def commit(config_path, registration, expected_old=None, first_owner=False):
+    config_path, config, registration, receipt, folder = load_context(config_path, registration)
+    if first_owner and expected_old is not None:
+        raise ValueError('First owner activation cannot name an existing owner')
+    if not first_owner and not expected_old:
+        raise ValueError('Ordinary handoff requires an explicit old owner')
+    proof = validate_proof(config, receipt, folder)
     canonical = Path(config['workspace']).resolve() / '.project-delegation/github-acpx'
+    canonical.mkdir(parents=True, exist_ok=True, mode=0o700)
     with open(canonical / 'controller.lock', 'a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         path = folder / 'state.json'
-        state = json.loads(path.read_text())
+        state = json.loads(path.read_text()) if path.exists() else {'queue': [], 'result_comment_ids': []}
+        if first_owner and state.get('binding'):
+            raise ValueError('An owner already exists; first owner activation refuses replacement')
+        if not first_owner and not state.get('identity'):
+            raise ValueError('Existing owner identity is missing; explicit recovery required')
         assert_quiescent(state, expected_old)
         for key in ('project_node_id', 'repository', 'user_login', 'workspace'):
-            if state.get('identity', {}).get(key) != receipt['scope'][key]:
+            if state.get('identity') and state['identity'].get(key) != receipt['scope'][key]:
                 raise ValueError('Existing controller identity has a different Project/repository scope')
         meta = command(config, proof['agent_command'], ['sessions', 'show', proof['session_name']])[0]
         if meta.get('closed') or meta.get('acpxRecordId') != proof['acpx_record_id'] or meta.get('acpSessionId') != proof['provider_thread_id']:
             raise RuntimeError('Verified record is no longer valid')
+        updated = copy.deepcopy(state)
+        if first_owner:
+            initial_baseline(config, updated)
         backup = folder / ('handoff-' + str(time.time_ns()))
         backup.mkdir(mode=0o700)
         for source in (path, config_path):
-            private_write(backup / source.name, source.read_text())
-        updated = copy.deepcopy(state)
+            if source.exists():
+                private_write(backup / source.name, source.read_text())
+        if not updated.get('identity'):
+            updated['identity'] = dict(receipt['scope'])
         updated['identity']['agent_command'] = proof['agent_command']
+        updated['initialization'] = 'completed'
         updated['binding'] = {key: proof[key] for key in ('provider_thread_id', 'acpx_record_id', 'acpx_session_id', 'session_name')}
         updated.setdefault('handoff_history', []).append({'previous_provider_thread_id': expected_old,
             'provider_thread_id': proof['provider_thread_id'], 'at': time.time(), 'backup': str(backup)})
@@ -159,10 +218,13 @@ def main():
     parser.add_argument('--registration', required=True, type=Path)
     parser.add_argument('--commit', action='store_true')
     parser.add_argument('--expected-old-thread')
+    parser.add_argument('--first-owner', action='store_true', help='Activate a verified existing native thread only if no prior owner exists')
     args = parser.parse_args()
-    if args.commit and not args.expected_old_thread:
-        parser.error('--commit requires --expected-old-thread')
-    result = commit(args.config, args.registration, args.expected_old_thread) if args.commit else verify(args.config, args.registration)
+    if args.first_owner and (not args.commit or args.expected_old_thread):
+        parser.error('--first-owner requires --commit and forbids --expected-old-thread')
+    if args.commit and not (args.expected_old_thread or args.first_owner):
+        parser.error('--commit requires --expected-old-thread or --first-owner')
+    result = commit(args.config, args.registration, args.expected_old_thread, args.first_owner) if args.commit else verify(args.config, args.registration)
     print(json.dumps(result, ensure_ascii=False))
 
 

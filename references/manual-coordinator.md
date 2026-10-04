@@ -1,40 +1,43 @@
-# 在所选项目会话登记固定协调者
+# 在当前项目会话指定固定协调者
 
-本版只证明了隔离同线程恢复与 fixture 登记/交接约束。真实用户目标未登记，桌面可见性和实时同步未验证，不能宣称生产交接完成。下列路径、仓库和 ID 标签均为占位说明，不包含真实部署记录。
+用户只需在希望担任协调者的项目会话发送：
 
-在所选项目的目标会话发送以下 prompt。此步骤只登记候选，不抢占当前后台协调者：
+> 你作为这个项目的 coordinator
+
+“请把当前会话设为本项目协调者”或 “Be the coordinator for this project” 等自然表达使用同一入口。用户不必填写 Project ID、会话 ID、配置路径或粘贴命令。这里的“这个项目”指当前工具实际运行的工作目录及其对应 Git 仓库，不根据桌面截图、会话标题或截断主机地址推测。
+
+## Agent 内部入口
+
+识别上述请求后，agent 使用安装中的 `project-delegation/scripts/coordinator_bootstrap.py`：
 
 ```text
-请使用 project-delegation 的手动登记入口，将当前这个会话登记为 所选 GitHub Project的候选固定 coordinator。
-绑定 Project 配置中已选定的 Project、仓库 OWNER/REPOSITORY，项目根 /absolute/repository/workspace。
-先检查当前工具确实运行在这个项目根，且运行时提供 CODEX_THREAD_ID；不要猜测、手填或覆写会话 ID。
-在项目根执行：
-python3 ~/.codex/skills/project-delegation/scripts/register_coordinator.py --config /absolute/private/config.json
-只返回登记文件、实际 native thread ID 与 pending 状态，随后结束本轮，等后台验证及交接。
-我只担任任务协调和验收，实现交给独立 executor。不要创建第二个协调会话，不启动控制器，不自动执行历史 Issue。
+python3 <installed skill>/scripts/coordinator_bootstrap.py
 ```
 
-注册程序仅接受当前进程继承的 `CODEX_THREAD_ID`，没有 `--thread-id` 参数。根目录或 scope 不匹配时拒绝。这里的环境变量是 Codex 运行时身份线索，并非密码学证明；登记文件也不是激活凭据。验证会通过官方 ACP `session/load` 加载确切 native ID，并在同一 ID 上完成两次无工具回复，第二次跨 acpx TTL 恢复并读回第一轮 nonce。若目标会话工具不在 目标主机的该项目根，或缺少此环境变量，登记失败，不另建会话替代。
+这是 agent 内部工具调用，不是交给用户执行的步骤。程序默认读取当前 cwd 和进程继承的 `CODEX_THREAD_ID`，从当前目录的祖先查找 `.project-delegation/github-acpx/config.json`、`.project-delegation/config.json`，并检查个人 `~/.local/share/project-delegation/projects/*/config.json` 中匹配实际 workspace/Git 根的绑定。采用唯一、最深的匹配范围；多个候选返回 `needs_selection`，缺少绑定返回 `needs_configuration`。agent 只针对返回的具体缺失项询问，不猜测仓库、Project 或会话身份，也不自动创建配置、下载运行时或初始化另一个协调会话。
 
-后台管理员在目标会话完成登记且当前 turn 已结束之后执行：
+`CODEX_THREAD_ID` 是运行时提供的身份线索，不是密码学证明。不能从用户 prompt 获取、手填或覆盖该变量。缺少信号、根目录或范围不匹配、读取或工具权限失败时，报告具体原因并停止相关步骤；不改用隐藏接口、私有数据库或桌面自动化绕过限制。
 
-```sh
-python3 ~/.codex/skills/project-delegation/scripts/adopt_coordinator.py \
-  --config /absolute/private/config.json \
-  --registration /absolute/repository/workspace/.project-delegation/github-acpx/enrollments/实际native线程ID.json
-```
+## 复用和登记
 
-第一次仅验证，原控制器仍为 owner。加载适配器的 guard 已绑定候选 native ID，禁止 `session/new` fallback 和 fork。验证成功后保持候选会话 idle，等待原控制器完成在途任务并正常停止，再执行交接：
+若当前会话已是 active owner，入口核对持久绑定及 ledger 后复用该身份，不重复登记或交接。若当前 native ID 已有 pending 登记，继续返回同一登记和状态，不新建候选。其他未登记会话通过 `register_coordinator.enroll` 仅登记为 pending；bootstrap 不验证 ACP、不提交交接、不启动控制器，也不派发真实任务。
 
-```sh
-python3 ~/.codex/skills/project-delegation/scripts/adopt_coordinator.py \
-  --config /absolute/private/config.json \
-  --registration /absolute/repository/workspace/.project-delegation/github-acpx/enrollments/实际native线程ID.json \
-  --commit --expected-old-thread 当前已核验的旧native线程ID
-```
+返回 pending 时，agent 应简短说明“当前会话已登记，尚未接管后台”，给出工具实际返回的登记记录和后续状态，然后结束当前 turn。登记文件不是激活凭据。不要在该会话自身尚未结束的 turn 内调用 ACP 加载或验证它：这会争用同一会话，可能形成等待自身结束的死锁。
 
-交接必须取得项目 canonical controller.lock、旧绑定仍匹配、无 running task、验证未超过15分钟。配置及状态先备份，只替换协调者 binding/guard 命令，queue、baseline、评论去重及看板观察保留。旧 ledger 不移动、旧 native 会话不关闭；工具不会自行启动控制器。配置/状态两文件写入中断会造成身份不匹配而拒绝启动，需从明确备份恢复。随后由部署管理员正常启动原控制器服务，并校验两次后台请求仍使用新绑定的同一 native ID。
+## 首任激活与已有 owner 交接
 
-登记不是任意时刻可同时操控会话的保证。交接后的协调会话归后台串行 owner 使用，用户在桌面发新 prompt 前需暂停后台并等在途 turn 完成，避免两端争用。ACP 加载确切 ID 支持后台恢复；桌面列表展示或实时同步未验证，不能承诺。没有使用桌面 UI 自动化、私有数据库或隐藏会话注入接口。
+目标 turn 结束后，由外部部署流程取得官方提供的 idle 证据，再通过受支持 ACP `session/load` 加载登记的确切 native ID。验证同一 ID 上的无工具往返及恢复能力；guard 必须禁止 `session/new`、fork 和新 native fallback。无法加载或身份不一致时保持 pending 并报告失败，不能以新建替代会话掩盖失败。只有静态写入 session ID 不足以证明 GitHub 后台可以续接或唤醒该会话。
 
-本机隔离 QA 使用已有测试 native 会话，不触及生产会话。登记 provenance 在 QA 中为人工构造 fixture；真实目标桌面会话须由上方 prompt 运行 register 程序，并在结束 turn 后完成验证与交接。
+首次 owner 激活也需要上述结束 turn、idle 证据和实际恢复验证。有现任 owner 时，现任继续持有生产绑定，直到候选通过验证、现任已接纳任务完成且控制器正常停止，再进行明确交接。提交须取得项目 canonical controller lock，确认预期旧身份、没有在途任务且验证仍有效；先备份再变更绑定，保留 queue、baseline、看板观察、评论去重和 executor 记录。不得关闭用户会话、抢占正在执行的 turn 或自行迁移运行中的控制器。
+
+交接后由正常部署流程启动原控制器，并验证后台请求仍使用新绑定的同一 native ID。权限不足或缺少官方 idle 证明时，保留现任 owner 和 pending 记录，返回具体阻碍。当前 role 或工具绑定本身不自动授权真实研究任务派发、看板状态批量调整或历史任务回放。
+
+后台持有协调会话时，用户再次交互前应暂停后台 intake，等待在途 turn 结束，避免两端争用。官方 ACP 恢复验证与桌面会话列表展示是不同证据；未验证桌面同步时不得承诺其列表或实时内容必然更新。
+
+## 协调者工作规则
+
+完整执行规则见 [GitHub/acpx 工作流](github-acpx.md)：固定协调者负责规划、依赖与冲突判定、验收；独立持久 executor 默认最多三个并发，后续工作恢复各自原线程。领取评论、真实执行标识、结果评论与 HTML 报告沿用同一去重、权限和验收流程。只在已绑定 Project/repository、用户授权的当前任务范围内工作；登记 coordinator 不扩大该范围。行为或研究结论需要相应证据，静态检查和协调回复不等于任务完成。
+
+本文只说明入口和安全交接协议；修改或阅读文档不会改变实际生产 binding。
+
+当前发布验证包含离线入口和 owner 测试；桌面自然触发端到端流程、真实用户接管尚未验证。发布或安装此包不改变生产绑定，也不派发真实任务。

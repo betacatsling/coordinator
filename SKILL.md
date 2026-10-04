@@ -1,15 +1,33 @@
 ---
 name: project-delegation
-description: Coordinate document-led project work through mcp-agents Codex sessions, execute assigned tasks, or debounce local PROJECT.md input into durable coordinator turns. Use when the user requests project delegation, local automatic progression, or work assigned through this workflow.
+description: Use when the user says 你作为这个项目的 coordinator, 担任当前项目的协调者, be this project's coordinator, or requests project delegation, parallel Codex task sessions, task coordination and acceptance, or automatic progression. Resolve the current project binding and actual session automatically, reuse active or pending ownership, and keep implementation in independent persistent executors.
 ---
 
 # Project delegation
 
+## One sentence role activation
+
+The user only needs to say **“你作为这个项目的 coordinator”** (or an equivalent natural role request). Do not ask them to paste commands, paths, Project IDs, session IDs or workflow rules. Apply this skill and [the short-prompt procedure](references/manual-coordinator.md).
+
+Run `python3 <this installed skill>/scripts/coordinator_bootstrap.py` internally in the current project tool runtime. It discovers the closest existing project binding from project-local configuration and the personal project registry, checks Git origin/workspace, and uses only runtime `CODEX_THREAD_ID`. Never forward an unrelated local identity into SSH or pretend a remote workspace is local. Read-only `--inspect` is available for diagnosis.
+
+- `active`: reuse the same binding and owner; do not create a session, restart a service, or race a background turn.
+- `pending`: continue the existing enrollment/handoff, without another owner or duplicate registration.
+- `registration_needed` is the read-only preview. Normal invocation enrolls the existing current thread and returns pending. End this turn before external verification; never invoke ACP prompts into your own still-active tool turn.
+- `needs_selection` or `needs_configuration`: inspect relevant current-project instructions and connected read-only binding information, then ask only for the unresolved binding. Infer the repository from Git instead of asking again. Do not guess a Project or silently broaden scope.
+- `blocked`: explain the actual identity/path/owner/proof problem, retain the current owner and use supported recovery. Missing runtime identity is not a request for the user to fabricate a UUID.
+
+After this turn ends, use the supported verified handoff procedure: official idle evidence, two exact-native-ID ACP turns, shared owner lock and no admitted work. First-owner activation and transfer are distinct; never create a replacement native thread. A pending receipt is not activation and the short prompt is not a claim of desktop synchronization. A role request itself does not authorize the workflow maintainer to choose or launch research tasks.
+
+All task policy belongs here: fixed coordinator only plans and accepts; each independent task gets its own persistent Codex executor session, default three in parallel; declared dependencies, file scopes and approved resource leases limit overlap. Preserve dirty work, comment only on actual claim, sync configured Project status, update the same claim with the real executor ID, verify actual artifacts/checks, publish a truthful HTML result with a verified private link, and exclude own outputs from fresh inputs. [GitHub backend details](references/github-acpx.md) hold the exact protocol; legacy local-document hooks remain optional. The user need not repeat these rules.
+
 Use the user's project document as the source of goals, acceptance criteria, feedback, and task status. Resolve its absolute path and the project workspace before dispatch. Read the relevant sections and record a revision marker or content hash. Preserve the document's existing format.
+
+Release validation covers offline bootstrap and ownership fixtures. Desktop natural-trigger end-to-end operation and real user takeover remain unverified; publishing or installing this package does not change production bindings or tasks.
 
 ## Coordinator
 
-Split work into independently checkable tasks with stable IDs. Record each task's scope, owned files, dependencies, acceptance checks, document version, status, and execution `threadId` / `jobId`. Use separate workspaces or nonoverlapping file ownership for concurrent writers. Concurrency is configurable; default to two. Executors do not recursively delegate.
+Split work into independently checkable tasks with stable IDs. Record each task's scope, owned files, dependencies, acceptance checks, document version, status, and execution `threadId` / `jobId`. Use separate workspaces or nonoverlapping file ownership for concurrent writers. Concurrency is configurable; default to three independent persistent Codex executor sessions. Executors do not recursively delegate.
 
 Use the available MCP tool schemas rather than guessing parameters. With the Codex provider, start independent work using `codex-start` with an absolute `cwd`, `sandbox: workspace-write`, and `allow_subagents: false`. The server must use `on-request` approvals. Include an executor brief: task ID, document path/version, relevant goals and feedback, allowed files, expected deliverables, and acceptance checks. For reviews use `read-only`.
 
@@ -68,5 +86,3 @@ When the user selects the TODO board, configure its verified view/Type/Status ma
 If the user chooses their current project session as coordinator, use [manual coordinator registration](references/manual-coordinator.md): runtime identity enrollment is pending, not activation. End the registration turn before a two-turn exact-native-ID ACP resume proof; then quiesce the old owner and commit under the shared lock without losing queue/baseline. Never claim desktop visibility or migrate merely from a user-supplied ID.
 
 For independent ready work, the coordinator assigns one separate persistent Codex executor session per task; use the GitHub backend pool (default three, configurable) rather than sequential execution or native subagents. Coordinator planning/acceptance stays serialized in its fixed session; file/resource leases and dependencies constrain executors. Persist and display task-to-native-session mappings, append the actual executor ID to the same claim comment, and resume follow-ups with that task’s original receipt/workspace. Do not set a global executor ID or choose/dispatch research Issues while merely modifying this workflow.
-
-Verification boundary: the implementation task reported two isolated real Codex sessions overlapping and resuming their original IDs. Release tests exercise fake executors and temporary worktrees, not production research. The real user-selected coordinator target was not registered and UI synchronization was not verified; do not claim a completed production handoff.
