@@ -12,7 +12,7 @@ coordinator 只派发并验收。显式配置 executor 时，独立 MCP executor
 
 **生产尚未启用。** 评论/状态回写已实现，模板默认关闭并 dry-run。写前检查当前输入版本、Project/仓库范围和认证作者，通过自己结果评论的标记恢复重试去重。状态更新必须匹配真实字段及选项；待合并的隔离补丁不自动标 Done。
 
-`report_base_url` 必须指向已有私有 HTTP(S) 端点，只有 HTTP 200 且报告字节一致才产生验证过的 URL，否则保留本地路径、`url: null`。控制器主机可访问不等于读者可访问。私有回环报告服务及 SSH 转发需要用户配置和批准，本包不会启动。主实现任务验证了真实 GitHub 读取/dry-run，零 mutation，生产循环未启动。旧监听器仍活动时阻止新控制器抢占，需先处理待办再明确批准安全切换。外部 HTML skill 不改动。
+`report_base_url` 必须指向已有私有 HTTP(S) 端点，只有 HTTP 200 且报告字节一致才产生验证过的 URL，否则保留本地路径、`url: null`。控制器主机可访问不等于读者可访问。[可选 serve_reports.py 及 SSH 转发说明](references/github-acpx.md#private-report-access)需要用户配置和批准，本包不会启动。先前 follow-up 验证了真实 GitHub 读取/dry-run，零 mutation；通用示例不启用生产控制器。旧监听器仍活动时阻止新控制器抢占，需先处理待办再明确批准安全切换。外部 HTML skill 不改动。
 
 另需已认证 GitHub CLI、独立安装的 acpx 0.19.4 和 @agentclientprotocol/codex-acp 2.1.1。使用显式运行路径，不复制认证或真实绑定状态。`init` 创建固定 coordinator；`once` 处理队列；`run` 持续 polling，Ctrl-C/SIGTERM 后等待已接纳回合结束再释放锁。补齐生产设置并检查其他输入所有者后，才启用真实事件循环。
 

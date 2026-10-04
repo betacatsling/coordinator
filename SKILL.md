@@ -52,7 +52,7 @@ Templates are optional project-level examples, not installation-time activation.
 
 ## GitHub Project backend
 
-Release scope: scoped comment/status writeback, current-revision/author checks, HTTP report-byte verification and per-Issue detached worktrees are included. Generic examples keep writeback/executors disabled and dry-run enabled. Production was not started. Private report serving/reader access and safe handoff from an existing watcher still require concrete operator configuration and authorization. A verified local test endpoint is not an existing public report URL; static file/syntax checks do not prove behavioral correctness.
+Release scope: scoped comment/status writeback, current-revision/author checks, HTTP report-byte verification and per-Issue detached worktrees are included. Generic examples keep writeback/executors disabled and dry-run enabled. They do not activate production. Optional serve_reports.py binds only IPv4 loopback for a selected report directory; it does not install a service, provide authentication or start SSH forwarding. Private reader access and safe handoff from an existing watcher require concrete operator configuration and authorization. A verified local test endpoint is not an existing public report URL; static file/syntax checks do not prove behavioral correctness.
 
 For the selected repository and Project, follow [references/github-acpx.md](references/github-acpx.md) and `scripts/project_acpx.py`:
 

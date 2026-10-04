@@ -42,3 +42,9 @@ Five source tests cover dry-run without mutations, comment/status retry deduplic
 The implementation task reported these five tests passing on macOS and remote Linux, plus actual Project/Issue/viewer/status API reads and dry-run with zero mutations. This release did not repeat business API calls or activate a controller. No persistent report server or SSH forward was started.
 
 Remaining deployment work is concrete private report access and explicit safe handoff after legacy pending work settles. Reports expose a URL only after identical-byte HTTP verification on the controller host; reader reachability still needs verification. Per-Issue worktrees are retained for review without automatic merge. Static scope/diff/Python syntax checks are not behavioral tests.
+
+## Loopback report helper
+
+serve_reports.py matches the implementation source snapshot exactly (SHA256 b2ea9ee9df9701d1ef36c63bfba4a98d9c98bdfb9a8ec201d30f8c2f44afdfa5). Three temporary localhost tests cover GET/HEAD report bytes, rejection of a symlink escaping the selected directory, and parent/encoded-parent paths not exposing an outside fixture. Test listeners use ephemeral ports and are shut down after each case.
+
+No production service, report, address, binding, deployment record or verification record was copied or operated during this release work. The included commands are generic foreground examples. Authentication/TLS and reader access are not supplied by the helper; operator-selected transport and access checks remain necessary.

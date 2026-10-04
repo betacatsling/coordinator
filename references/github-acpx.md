@@ -39,6 +39,23 @@ Optional `writeback.status` requires exact `field_id`, `accepted_option_id`, and
 
 ## Private report access
 
+`scripts/serve_reports.py` is an optional foreground helper for an explicitly selected reports directory. It binds IPv4 loopback only and rejects resolved paths outside that directory, including escaping symlinks. It serves files and directory listings from that directory; select a dedicated report folder, not a repository or credential directory. It does not provide authentication, TLS, a public URL, an SSH connection, or service installation.
+
+After selecting an unused local port and authorizing the service, run:
+
+```sh
+python3 scripts/serve_reports.py --directory /absolute/reports --port "$REPORT_PORT"
+```
+
+For access from another computer, configure an authorized SSH connection to the report host and forward the chosen port:
+
+```sh
+ssh -N -o ExitOnForwardFailure=yes \
+  -L "127.0.0.1:${REPORT_PORT}:127.0.0.1:${REPORT_PORT}" REPORT_HOST
+```
+
+Set the controller's `report_base_url` to the matching loopback URL on the controller host. Test reader access through the forward separately. Both commands stay in the foreground; Ctrl-C or SIGTERM stops only the process you started. Stop the report process and forwarding process separately. Installing this repository runs neither command and does not change existing production services. No real deployment configuration or reports are distributed here.
+
 `report_base_url` names an existing private HTTP(S) endpoint serving the reports directory. It starts no service or tunnel. A rendered report is read back from that exact URL; only identical bytes with HTTP 200 produce a non-null `url` and `access_verified: true`. An unavailable endpoint retains `local_path` and `configured_url`, with `url: null`; comments never invent an accessible link. Verification on the controller host does not prove reachability from another computer. Do not upload confidential reports to a public host. A new persistent loopback server or SSH forward requires concrete user approval; do not bind 0.0.0.0, edit firewall rules or repurpose another project's existing service.
 
 ## Per-Issue repository worktrees
