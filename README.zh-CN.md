@@ -2,15 +2,17 @@
 
 Codex 项目协调 skill，以及本地 `PROJECT.md` 文件监听器。[English](README.md)
 
-## GitHub 输入模式：基础能力发布
+## GitHub 输入模式：限定回写与工作树
 
-本版已纳入固定 acpx coordinator 绑定、GitHub 输入解析与持久版本队列，以及可选 executor 实现和原 coordinator 验收流程。见[配置与命令](references/github-acpx.md)、[通用配置模板](assets/github-acpx.example.json)及[验证范围](VALIDATION.md)。原有文件监听和原生提醒 hook 保留为可选模式。
+本版已纳入固定 acpx coordinator、输入解析去重、可选 executor/验收、限定范围的结果回写、报告端点验证和逐 Issue detached worktree。见[配置与命令](references/github-acpx.md)、[通用配置模板](assets/github-acpx.example.json)及[验证范围](VALIDATION.md)。原有文件监听和原生提醒 hook 保留为可选模式。
 
 绑定一个 GitHub Project 和一个仓库，由显式初始化创建固定 acpx coordinator，后续恢复同一身份。范围内配置用户的 Issue 正文和评论作为输入，不按标签筛选，无标签也处理。`run` 默认每 15 秒用普通 API polling 检测变化，无 10 秒静默条件，不让模型调用承担等待。真实 GitHub 初始化会记录历史版本基线；绑定变更或中断任务需要明确排查，不自动替换 coordinator 或重放任务。
 
-coordinator 只派发并验收。显式配置 executor 时，独立 MCP executor 实现并运行固定检查，再把实际源码和观察结果交给原 coordinator 验收。未配置 executor 时只提供协调建议，不代表 Issue 完成。文件清单约束派发和产物检查，但不构成独立的操作系统文件访问边界。
+coordinator 只派发并验收。显式配置 executor 时，独立 MCP executor 在逐 Issue detached worktree 实现，再把实际源码和检查结果交给原 coordinator。保留主工作区未提交修改，范围重叠就阻塞；产物留待审核，不合并、提交或推送。检查命令由控制器配置；默认 diff/范围/Python 语法检查是静态验证，不代表行为正确。未配置 executor 时只提供协调建议。文件清单约束派发和验收，不构成独立操作系统文件访问边界。
 
-**生产回写尚未完成。** Issue 结果评论、Project 状态回写、可访问 HTML 托管链接及生产 executor 文件所有权仍未完成或配置。本版报告只有本地路径，`url` 为 null。主实现任务没有启动真实 Project 事件循环。macOS/Linux 固定会话恢复、隔离 executor 与验收已分别验证，不能据此声称生产闭环已交付。最终目标仍是 Issue 简短结论、实际证据和可访问 HTML 详情链接；外部 HTML skill 不改动。
+**生产尚未启用。** 评论/状态回写已实现，模板默认关闭并 dry-run。写前检查当前输入版本、Project/仓库范围和认证作者，通过自己结果评论的标记恢复重试去重。状态更新必须匹配真实字段及选项；待合并的隔离补丁不自动标 Done。
+
+`report_base_url` 必须指向已有私有 HTTP(S) 端点，只有 HTTP 200 且报告字节一致才产生验证过的 URL，否则保留本地路径、`url: null`。控制器主机可访问不等于读者可访问。私有回环报告服务及 SSH 转发需要用户配置和批准，本包不会启动。主实现任务验证了真实 GitHub 读取/dry-run，零 mutation，生产循环未启动。旧监听器仍活动时阻止新控制器抢占，需先处理待办再明确批准安全切换。外部 HTML skill 不改动。
 
 另需已认证 GitHub CLI、独立安装的 acpx 0.19.4 和 @agentclientprotocol/codex-acp 2.1.1。使用显式运行路径，不复制认证或真实绑定状态。`init` 创建固定 coordinator；`once` 处理队列；`run` 持续 polling，Ctrl-C/SIGTERM 后等待已接纳回合结束再释放锁。补齐生产设置并检查其他输入所有者后，才启用真实事件循环。
 

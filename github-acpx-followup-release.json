@@ -1,0 +1,26 @@
+{
+  "stage": "github-acpx-writeback-worktree-followup",
+  "files": {
+    "SKILL.md": "f70859e016fb4a894589abe5a095dd375026da001b27dcb9260f8a918ce98611",
+    "references/github-acpx.md": "2fa2fc8273ce40a53c1cd0687b80644c313fda970f2d93694d9dadd1ef8c4a8c",
+    "scripts/project_acpx.py": "f76c4bf33521cf11ad8f4f99fb73966f481a8d6c1a4b16829c99a1315425c889",
+    "scripts/mcp_executor.py": "f62f9565b7a2e5752d0ba47654b4530b422dc06758e625a03b2b621a6dffa468",
+    "scripts/github_writeback.py": "f0ff123ad73ca28f9653e3f5cecac44dfe8f6bd7ea0010d424cca7122e176e63",
+    "scripts/issue_worktree.py": "4d1c63481d596706d9b1062239f7f7eba343637f7a2e4dfe6212c56607bf6d4e",
+    "assets/github-acpx.example.json": "a59aa9203d70dc95d3df19862ea61a14f1dd34b95b50d18870f60e63ff975919",
+    "tests/test_github_backend.py": "3fa1ae8e87c0b7931449274388f6ad675f9ebce76ebe66362416999c173ab5ba"
+  },
+  "installed_mac_server_hashes_match": true,
+  "validation": [
+    "Five Mac mock/worktree/temporary-loopback tests passed",
+    "Same five tests on remote Linux host passed",
+    "Real Project/Issue/viewer/status API read and dry-run passed, no mutations",
+    "Skill validator passed"
+  ],
+  "event_loop_started": false,
+  "executor": "Per-Issue detached worktree; preserve dirty main, no merge; fixed static checks by default, no behavioral correctness claim",
+  "remaining": [
+    "Explicit safe handoff after legacy pending work settles",
+    "Approve a concrete private loopback report server plus SSH forward if accessible reports are required"
+  ]
+}

@@ -76,7 +76,7 @@ class GitHubInputTests(unittest.TestCase):
         finally: project_acpx.fetch=original
     def test_executor_rejects_path_escape_before_mcp(self):
         with tempfile.TemporaryDirectory() as directory:
-            config={'cwd':directory,'owned_paths':['../escape.py'],'checks':[]}
+            config={'cwd':directory,'owned_paths':['../escape.py'],'checks':[[sys.executable,'--version']]}
             with self.assertRaises(ValueError): execute_assignment('fixture',config,Path(directory)/'receipt.json','not-used')
     def test_structured_plan_rejects_non_object(self):
         self.assertEqual(Coordinator.parse_object('```json\n{"assignment":"Do one thing"}\n```')['assignment'],'Do one thing')

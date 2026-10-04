@@ -52,7 +52,7 @@ Templates are optional project-level examples, not installation-time activation.
 
 ## GitHub Project backend
 
-Current release stage: fixed-session binding, GitHub parsing/deduplication, and optional independent executor/acceptance are included. Reports remain local with no network URL. Production Issue comments, Project state writeback, hosted reports, and production executor ownership are incomplete or unconfigured. The observed implementation did not start the real Project event loop. See VALIDATION.md; do not claim production completion from fixture or recovery checks.
+Release scope: scoped comment/status writeback, current-revision/author checks, HTTP report-byte verification and per-Issue detached worktrees are included. Generic examples keep writeback/executors disabled and dry-run enabled. Production was not started. Private report serving/reader access and safe handoff from an existing watcher still require concrete operator configuration and authorization. A verified local test endpoint is not an existing public report URL; static file/syntax checks do not prove behavioral correctness.
 
 For the selected repository and Project, follow [references/github-acpx.md](references/github-acpx.md) and `scripts/project_acpx.py`:
 
@@ -62,3 +62,5 @@ For the selected repository and Project, follow [references/github-acpx.md](refe
 4. Produce a concise result, verification and HTML report. Write Issue result comments and Project state only after the selected destination and field mapping are established; record result comment IDs to prevent output loops. A local report path is not a network link: do not claim an accessible HTML URL until hosting/access is verified.
 
 Keep the old file watcher and native hooks as optional backends; they do not form part of the default GitHub loop. Do not change answer-me-with-html. Do not enable competing real-project watchers, copy credentials between hosts, expand permissions without authorization, or auto-approve unsafe actions.
+
+For the GitHub backend, use scoped idempotent write-back, exact live status mappings, verified private report-base URLs and per-Issue detached worktrees as described in `references/github-acpx.md`. Keep dry-run/default writes disabled until configured. Preserve dirty main-workspace files; a live legacy watcher blocks competing input ownership.

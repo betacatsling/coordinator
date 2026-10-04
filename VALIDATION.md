@@ -31,4 +31,14 @@ Nine additional offline tests pass for labeled/unlabeled input, selected-user bo
 
 The implementation task separately reported macOS same-session restart/busy queue, fixture version deduplication and local HTML reports, an independent MCP executor with four actual unit tests and original-coordinator acceptance, plus remote Linux same-session restart/deduplication/local HTML reports. These are source-task observations rather than replayed release tests.
 
-Remaining: Issue result comments and Project status writeback are not implemented/enabled; report hosting is not configured and URLs are null; no production executor scope is configured. The real Project event loop was not started. Owned-path validation is not a separate operating-system file-access boundary.
+Remaining at the foundation release (superseded by the follow-up below): Issue result comments and Project status writeback were not implemented/enabled; report hosting is not configured and URLs are null; no production executor scope is configured. The real Project event loop was not started. Owned-path validation is not a separate operating-system file-access boundary.
+
+## Scoped writeback/worktree follow-up
+
+All eight source files matched github-acpx-followup-release.json before public documentation gained a release-stage notice and a host-specific word was generalized. The public manifest excludes business binding, status field IDs, credentials, private paths, provider IDs and real watcher state.
+
+Five source tests cover dry-run without mutations, comment/status retry deduplication, current revision/author/scope/live option refusal, detached worktrees preserving dirty main files and rejecting unowned edits, live legacy-owner refusal, and temporary loopback HTTP report byte verification. Release CI uses a small Python renderer fixture for portability; it is not an answer-me-with-html renderer test. The actual installed renderer was separately verified by the implementation task.
+
+The implementation task reported these five tests passing on macOS and remote Linux, plus actual Project/Issue/viewer/status API reads and dry-run with zero mutations. This release did not repeat business API calls or activate a controller. No persistent report server or SSH forward was started.
+
+Remaining deployment work is concrete private report access and explicit safe handoff after legacy pending work settles. Reports expose a URL only after identical-byte HTTP verification on the controller host; reader reachability still needs verification. Per-Issue worktrees are retained for review without automatic merge. Static scope/diff/Python syntax checks are not behavioral tests.

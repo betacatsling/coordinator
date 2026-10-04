@@ -1,5 +1,7 @@
 {
-  "source": {"type": "github"},
+  "source": {
+    "type": "github"
+  },
   "project_node_id": "REPLACE_WITH_SELECTED_PROJECT_NODE_ID",
   "repository": "OWNER/REPOSITORY",
   "user_login": "AUTHORIZED_USER",
@@ -12,5 +14,18 @@
   "permissions": "reads",
   "poll_seconds": 15,
   "ttl": 5,
-  "timeout": 120
+  "timeout": 120,
+  "report_base_url": null,
+  "writeback": {
+    "enabled": false,
+    "dry_run": true
+  },
+  "executor": {
+    "enabled": false,
+    "isolate_worktree": true,
+    "server": "/absolute/mcp-agents/server.js",
+    "bridge_state_root": "/absolute/private/executor-state",
+    "checks": [],
+    "timeout": 240
+  }
 }

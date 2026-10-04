@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+from urllib.parse import urlsplit, quote
 from github_project_inputs import normalize_project
 from watch_project import atomic_write
 
@@ -36,7 +37,7 @@ def fetch(config):
     query="""query($id:ID!,$cursor:String){
       node(id:$id){... on ProjectV2{
         id title url items(first:100,after:$cursor){
-          pageInfo{hasNextPage endCursor} nodes{id content{
+          pageInfo{hasNextPage endCursor} nodes{id fieldValues(first:100){nodes{... on ProjectV2ItemFieldSingleSelectValue{optionId field{... on ProjectV2SingleSelectField{id}}}}} content{
             __typename ... on Issue{
               id number title body url state author{login} repository{nameWithOwner}
               comments(first:100){pageInfo{hasNextPage endCursor} nodes{id body author{login}}}
@@ -118,6 +119,12 @@ class Coordinator:
 
     def scan(self):
         project=fetch(self.config)
+        from github_writeback import is_result_comment
+        for item in project['items']['nodes']:
+            issue=item.get('content') or {}
+            for comment in issue.get('comments',{}).get('nodes',[]):
+                if comment.get('author',{}).get('login','').lower()==self.config['user_login'].lower() and is_result_comment(comment.get('body',''),self.config,issue['id']):
+                    if comment['id'] not in self.state['result_comment_ids']:self.state['result_comment_ids'].append(comment['id'])
         tasks=normalize_project(project,self.config['project_node_id'],self.config['user_login'],self.state['result_comment_ids'],self.config['repository'])
         current={t['issue_id']:t['revision_hash'] for t in tasks}
         for entry in self.state['queue']:
@@ -130,12 +137,24 @@ class Coordinator:
     def publish(self,entry,text):
         c=self.config;reports=self.workspace/'reports';reports.mkdir(exist_ok=True)
         now=datetime.now(timezone.utc);name=now.strftime('%Y%m%dT%H%M%S%fZ-')+entry['task']['revision_hash'][:12]+'.html';path=reports/name
-        draft='---\ntitle: Project 协调与验收报告\nsubtitle: '+now.isoformat()+'\nlang: zh\n---\n## A 来源\n'+(entry['task'].get('url') or '本地 GitHub Project fixture')+'\n\n## B 协调结果 {span=2}\n'+text+'\n\n## C 范围\n固定 coordinator 负责协调与验收。此报告是本机文件，尚未发布为网络链接。\n'
+        draft='---\ntitle: Project 协调与验收报告\nsubtitle: '+now.isoformat()+'\nlang: zh\n---\n## A 来源\n'+(entry['task'].get('url') or '本地 GitHub Project fixture')+'\n\n## B 协调结果 {span=2}\n'+text+'\n\n## C 范围\n固定 coordinator 负责协调与验收。报告访问取决于已配置的私有服务；未自动公开发布。\n'
         env=dict(os.environ,AM_HOME=str(self.folder/'html-data'),AM_NO_UPDATE_CHECK='1',AM_NO_OPEN='1',CI='1')
         r=subprocess.run([c['node'],c['html_cli'],'render','-','-o',str(path),'--no-open'],input=draft,text=True,capture_output=True,env=env,timeout=30)
         if r.returncode or not path.is_file():raise RuntimeError('HTML rendering failed')
         with open(reports/'index.md','a') as f:f.write('- ['+now.isoformat()+']('+name+')\n')
-        return {'local_path':str(path),'url':None}
+        base=c.get('report_base_url');url=None
+        if base:
+            parsed=urlsplit(base)
+            if parsed.scheme not in {'http','https'} or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:raise ValueError('Invalid report_base_url')
+            url=base.rstrip('/')+'/'+quote(name)
+        verified=False
+        if url:
+            from urllib.request import urlopen
+            try:
+                with urlopen(url,timeout=5) as response:
+                    verified=response.status==200 and response.read(5*1024*1024)==path.read_bytes()
+            except Exception:pass
+        return {'local_path':str(path),'url':url if verified else None,'configured_url':url,'access_verified':verified}
 
     def coordinate(self,prompt):
         self.verify()
@@ -170,17 +189,26 @@ class Coordinator:
             executor=self.config.get('executor')
             if executor and executor.get('enabled'):
                 from mcp_executor import execute_assignment
-                target=Path(executor['cwd']).resolve(strict=True)
-                if target!=self.workspace and self.workspace not in target.parents:raise ValueError('Executor must belong to selected repository workspace')
-                plan=self.parse_object(self.coordinate(prompt+'\nReturn ONLY JSON with assignment (a concrete implementation brief) and owned_paths. Permitted owned_paths: '+json.dumps(executor['owned_paths'])+'. No implementation in this session.'))
-                if set(plan.get('owned_paths',[]))!=set(executor['owned_paths']) or not isinstance(plan.get('assignment'),str):raise ValueError('Coordinator assignment exceeds or differs from configured file scope')
+                from issue_worktree import create, validate_paths
+                isolated=executor.get('isolate_worktree',False)
+                if isolated:
+                    plan=self.parse_object(self.coordinate(prompt+'\nReturn ONLY JSON with assignment and owned_paths: a minimal list of repository-relative files or directories required by THIS Issue. Exclude .git, .codex, .agents, .project-delegation and reports. Do not invent shell/check commands.'))
+                    paths=validate_paths(plan.get('owned_paths'))
+                    if not isinstance(plan.get('assignment'),str):raise ValueError('Missing assignment')
+                    target,head=create(self.workspace,task,self.folder,paths)
+                    executor=dict(executor,cwd=str(target),owned_paths=paths,base_head=head)
+                else:
+                    target=Path(executor['cwd']).resolve(strict=True)
+                    if target!=self.workspace and self.workspace not in target.parents:raise ValueError('Executor must belong to selected repository workspace')
+                    plan=self.parse_object(self.coordinate(prompt+'\nReturn ONLY JSON with assignment and owned_paths. Permitted owned_paths: '+json.dumps(executor['owned_paths'])+'. No implementation in this session.'))
+                    if set(plan.get('owned_paths',[]))!=set(executor['owned_paths']) or not isinstance(plan.get('assignment'),str):raise ValueError('Coordinator assignment differs from configured file scope')
                 receipt_path=self.folder/('executor-'+task['revision_hash']+'.json')
                 receipt=execute_assignment(plan['assignment'],executor,receipt_path,self.config['node'])
                 if receipt['status']!='verified':raise RuntimeError('Independent executor checks failed; inspect receipt')
                 if receipt.get('thread_id')==self.state['binding']['provider_thread_id']:raise RuntimeError('Executor reused coordinator identity')
                 acceptance=self.parse_object(self.coordinate('You are the same fixed coordinator. Independently assess the actual source and program-run checks below against the original task. Do not implement or use tools. Return ONLY JSON with accepted (boolean), summary, and blockers. Do not treat an executor claim alone as evidence.\nOriginal task: '+json.dumps(task,ensure_ascii=False)+'\nProgram observations: '+json.dumps(receipt,ensure_ascii=False)))
                 if acceptance.get('accepted') is not True:raise RuntimeError('Coordinator rejected acceptance: '+str(acceptance.get('blockers')))
-                text=str(acceptance.get('summary',''))+'\n\nIndependent executor checks passed:\n'+'\n'.join('- '+shlex.join(c['argv']) for c in receipt['checks'])
+                text=str(acceptance.get('summary',''))+'\n\nIndependent executor configured checks passed (scope/syntax checks alone do not prove behavioral correctness):\n'+'\n'.join('- '+shlex.join(c['argv']) for c in receipt['checks'])
                 data={'executor_receipt':str(receipt_path),'acceptance':acceptance}
             else:
                 text=self.coordinate(prompt+'\nReturn bounded executor assignments, acceptance evidence or unresolved blockers.');data={}
@@ -188,7 +216,32 @@ class Coordinator:
             self.results.put((index,'completed',dict(data,result=text,report=report,completed_at=time.time())))
         except Exception as exc:self.results.put((index,'blocked',{'error':str(exc)}))
 
+    def writeback(self,entry,dry_run=False):
+        from github_writeback import write_result
+        settings=self.config.get('writeback',{})
+        if self.config['source']['type']!='github':raise ValueError('Fixture sources cannot write GitHub')
+        if not settings.get('enabled') and not dry_run:return
+        live=fetch(self.config)
+        result=write_result(self.config,entry['task'],live,entry.get('result',''),entry.get('report',{}),entry.get('acceptance',{}).get('accepted') is True,gh,dry_run or settings.get('dry_run',True))
+        entry['writeback']=result;entry.pop('writeback_error',None)
+        if result.get('comment_id') and result['comment_id'] not in self.state['result_comment_ids']:self.state['result_comment_ids'].append(result['comment_id'])
+        self.save();return result
+
+    def settle(self,index,status,data):
+        entry=self.state['queue'][index];entry.update(status=status,**data);self.save()
+        if status in {'completed','blocked'}:
+            if status=='blocked':entry['result']='执行受阻：'+entry.get('error','需核查固定协调会话')
+            try:self.writeback(entry)
+            except Exception as exc:entry['writeback_error']=str(exc);self.save()
+
     def run(self,once=False):
+        legacy=self.workspace/'.project-delegation/state.json'
+        if legacy.exists():
+            old=json.loads(legacy.read_text());pid=old.get('watcher_pid')
+            if isinstance(pid,int) and pid>0:
+                try:os.kill(pid,0)
+                except ProcessLookupError:pass
+                else:raise RuntimeError('Legacy watcher is alive (PID '+str(pid)+'); refuse competing input ownership. Settle its pending work and stop only that watcher explicitly before switching.')
         self.verify()
         # An interrupted request may already have executed. Never automatically replay it.
         for entry in self.state['queue']:
@@ -201,7 +254,7 @@ class Coordinator:
                 except Exception as exc:self.state['source_error']=str(exc);self.save()
                 next_poll=time.monotonic()+max(10,self.config.get('poll_seconds',15))
             while not self.results.empty():
-                index,status,data=self.results.get();self.state['queue'][index].update(status=status,**data);self.active=None;self.save()
+                index,status,data=self.results.get();self.settle(index,status,data);self.active=None
                 print(json.dumps({'status':status,'issue_id':self.state['queue'][index]['task']['issue_id'],'report':data.get('report')}),flush=True)
             if self.active is None and not self.state.get('source_error'):
                 index=next((i for i,e in enumerate(self.state['queue']) if e['status']=='pending'),None)
@@ -214,12 +267,15 @@ class Coordinator:
         # Do not cancel a known admitted turn; settle it before releasing the project lock.
         if self.active:self.active.join()
         while not self.results.empty():
-            index,status,data=self.results.get();self.state['queue'][index].update(status=status,**data)
+            index,status,data=self.results.get();self.settle(index,status,data)
         self.save()
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--config',required=True,type=Path);parser.add_argument('action',choices=['init','run','once','status'])
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--config',required=True,type=Path);parser.add_argument('action',choices=['init','run','once','status','writeback-dry-run','retry-writeback'])
     args=parser.parse_args();coordinator=Coordinator(args.config.resolve(strict=True))
     if args.action=='init':coordinator.initialize();print(json.dumps(coordinator.state['binding']))
     elif args.action=='status':print(json.dumps({'binding':coordinator.state.get('binding'),'queue':[{k:e.get(k) for k in ['status','report','error']} for e in coordinator.state['queue']],'source_error':coordinator.state.get('source_error')}))
+    elif args.action in {'writeback-dry-run','retry-writeback'}:
+        for entry in coordinator.state['queue']:
+            if entry['status'] in {'completed','blocked'}:print(json.dumps(coordinator.writeback(entry,dry_run=args.action=='writeback-dry-run'),ensure_ascii=False))
     else:coordinator.run(once=args.action=='once')
