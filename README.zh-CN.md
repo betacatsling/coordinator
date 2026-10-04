@@ -1,0 +1,63 @@
+# project-delegation
+
+Codex 项目协调 skill，以及本地 `PROJECT.md` 文件监听器。[English](README.md)
+
+修改文档中的输入区，连续 **10 秒** 没有新修改后，监听器通过外部 mcp-agents 启动独立 coordinator。它保存并复用 thread，执行期间将修改合并为最新一版，并用 answer-me-with-html 生成持久报告，在文档底部追加带日期的相对链接。
+
+## 依赖与安装
+
+需要 macOS/Linux、Python 3.9+、Node.js 26+、已登录且位于 PATH 的 Codex CLI。Python 部分仅使用标准库和 POSIX `fcntl`，暂不支持 Windows。源实现使用 Codex CLI 0.159.0。
+
+外部依赖分别安装，不打包第三方源码：
+
+- [mcp-agents](https://github.com/thomaswitt/mcp-agents)：测试版本 0.33.1，使用异步 Codex MCP 工具。
+- [answer-me-with-html](https://github.com/QingYunA/answer-me-with-html)：按上游说明安装，使用 `scripts/am.mjs` 生成报告。
+
+克隆仓库，将 `SKILL.md`、`scripts/`、`references/`、`assets/` 复制到 `$HOME/.codex/skills/project-delegation/`。已有安装先备份。本仓库不自动修改配置或认证。
+
+```sh
+npm install --prefix "$HOME/.local/share/project-delegation-deps" mcp-agents@0.33.1
+export PROJECT_DELEGATION_SERVER="$HOME/.local/share/project-delegation-deps/node_modules/mcp-agents/server.js"
+export PROJECT_DELEGATION_HTML_CLI="$HOME/.codex/skills/answer-me-with-html/scripts/am.mjs"
+```
+
+确认两个路径存在。Codex 保管认证，不要把 token 写进文档。
+
+## 使用
+
+将 [示例 PROJECT.md](examples/PROJECT.md) 放到目标项目，填写目标、范围、验收，再启动：
+
+```sh
+python3 scripts/watch_project.py --project /absolute/path/to/workspace
+```
+
+默认只响应后续输入修改；加 `--run-current` 可在 10 秒静默后提交当前内容。可用 `--server`、`--html-cli`、`--node` 指定路径，也可用上述环境变量及 `PROJECT_DELEGATION_NODE`。监听器有自己的 stdio MCP 连接，不会配置桌面 MCP。
+
+只有一对 `delegation:input` 标记之间的内容触发执行。输入以外的笔记、报告和链接更新不触发。执行期间修改只保留最新输入；相同哈希去重，失败不自动重试。手动协调遵循 skill 中的 executor 简报和文件所有权；监听器每次执行一个有界步骤，禁止递归派发。
+
+HTML 历史存于 `reports/`，文档底部追加日期链接；`DELEGATION-RESULTS.md` 是辅助最新文本记录。`.project-delegation/` 保存 thread、日志和报告索引。编辑器旧版本覆盖链接后，监听器可从索引恢复。报告、状态和日志可能包含敏感项目内容，请勿直接提交。
+
+## 停止与卸载
+
+Ctrl-C 或 SIGTERM 停止自己启动的监听器。关闭其私有 MCP 连接会取消活动任务，重试前检查文件。停止后再删除状态。卸载时删除安装的 skill 目录；若配置了 hook，仅移除新增条目，保留其他 hook。专用依赖目录不再被其他项目使用时可删除。报告默认保留。
+
+可选 hook 见 [hooks.example.json](assets/hooks.example.json)。替换项目与 skill 路径，确保 CLI 继承依赖环境变量，使用 Codex `/hooks` 审核并信任具体定义。本仓库不安装后台服务、登录项或全局 hook。hook 能力取决于 CLI 版本；切换标签页不保证触发 SessionEnd。
+
+## 真实限制
+
+这是本地文件触发的独立 coordinator。**ChatGPT 侧栏 Page/Canvas 不会自动映射成此文件**；需要真实文件映射或获授权的事件适配器。相对链接能否点击取决于前端。
+
+监听器必须持续运行；thread 可持久复用，job 仅在连接内有效。审批策略是 `on-request`，监听器不能自动批准请求；停止后在交互审批界面处理。提示词要求 coordinator 不使用网络、不安装依赖、不改认证/设置及监听器输出，但提示词不构成安全边界，仍以实际沙箱和宿主策略为准。
+
+文件事件不能判断修改者身份。追加报告会检查原子替换，但不能对任意并发原地写入提供事务保证。
+
+## 测试与许可
+
+```sh
+python3 -m unittest discover -s tests -v
+python3 scripts/scan_release.py
+```
+
+测试覆盖输入范围、报告恢复、renderer 调用、MCP 封装，以及使用假 MCP fixture 的实际 10 秒监听循环；**不能声称这些是模型实测**。主实现任务另有三轮真实 MCP 验证，属于当时环境的结果，详情见 [VALIDATION.md](VALIDATION.md)。
+
+自有 skill/胶水代码采用 [MIT](LICENSE)。第三方依赖保留各自许可，见 [THIRD_PARTY.md](THIRD_PARTY.md)。此项目独立于 OpenAI 官方产品。

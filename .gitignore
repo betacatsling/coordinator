@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+node_modules/
+.project-delegation/
+reports/
+DELEGATION-RESULTS.md
+.env
+.env.*
+*.log
+.DS_Store

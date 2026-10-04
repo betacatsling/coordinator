@@ -1,0 +1,71 @@
+# project-delegation
+
+A Codex skill and local document watcher for project work. [中文](README.zh-CN.md)
+
+Edit the marked input in `PROJECT.md`. After **10 quiet seconds**, the watcher starts an independent coordinator through the external mcp-agents Codex provider. It reuses a durable thread, coalesces edits made during execution, and publishes dated HTML reports with relative links back into the document.
+
+## Requirements and installation
+
+- macOS or Linux; Python 3.9+ (standard library only; uses POSIX `fcntl`). Windows is unsupported.
+- Node.js 26+ and an authenticated Codex CLI available on PATH. The source implementation used Codex CLI 0.159.0.
+- External [mcp-agents](https://github.com/thomaswitt/mcp-agents), tested with 0.33.1. This project uses its asynchronous `codex-start`, `codex-reply-start`, `codex-status`, and `codex-result` tools.
+- External [answer-me-with-html](https://github.com/QingYunA/answer-me-with-html), installed separately. Its `scripts/am.mjs` renders reports. No third-party source is bundled.
+
+Clone this repository. To install the skill, copy `SKILL.md`, `scripts/`, `references/`, and `assets/` into `$HOME/.codex/skills/project-delegation/`; back up an existing installation first. No installer runs or changes configuration automatically.
+
+Install a pinned bridge into a directory of your choice:
+
+```sh
+npm install --prefix "$HOME/.local/share/project-delegation-deps" mcp-agents@0.33.1
+export PROJECT_DELEGATION_SERVER="$HOME/.local/share/project-delegation-deps/node_modules/mcp-agents/server.js"
+export PROJECT_DELEGATION_HTML_CLI="$HOME/.codex/skills/answer-me-with-html/scripts/am.mjs"
+```
+
+Install the renderer using its upstream instructions. Check both exported paths exist. Authentication remains owned by Codex; do not put tokens in project documents.
+
+## Run
+
+Copy [examples/PROJECT.md](examples/PROJECT.md) into your chosen workspace, adjust its goals and acceptance checks, then run:
+
+```sh
+python3 scripts/watch_project.py --project /absolute/path/to/workspace
+```
+
+Only future input changes run by default. Add `--run-current` to submit the initial input after ten quiet seconds. Explicit `--server`, `--html-cli`, and `--node` options override defaults; `PROJECT_DELEGATION_NODE` overrides Node discovery. The two dependency environment variables also work for optional hooks.
+
+Manual coordination uses the skill's executor briefs and separate owned workspaces. The watcher itself performs one bounded coordinator step per input revision and disables recursive agents. The watcher creates its own private stdio MCP connection; it does not require or edit a desktop MCP config.
+
+## Reports and state
+
+- `PROJECT.md`: input, human notes, and dated report links.
+- `reports/`: persistent HTML history rendered with `--no-open`.
+- `DELEGATION-RESULTS.md`: auxiliary latest text result.
+- `.project-delegation/`: private state, thread IDs, logs, and report index.
+
+Only the single `<!-- delegation:input -->` / `<!-- /delegation:input -->` block triggers work. Output edits do not trigger another call. Atomic-save gaps pause dispatch; stale editor saves can have generated report links restored from the index. Keep state and reports private when they contain project content.
+
+## Stop and uninstall
+
+Press Ctrl-C or send SIGTERM to the watcher you started. Closing its private MCP connection cancels active jobs; inspect files before retrying. Stop it before deleting its state. Remove the installed skill directory to uninstall. Remove only the optional hook entries you added, preserving other hooks. Dependencies can be removed from their dedicated install directory if no other project uses them. Reports are retained until you choose to delete them.
+
+Optional project-local SessionStart/SessionEnd hooks are in [assets/hooks.example.json](assets/hooks.example.json). Replace the placeholder project path and skill path, ensure dependency environment variables reach the CLI, and review/trust the exact definitions with Codex `/hooks`. This repository does not install a service, login item, or global hooks. Hook lifecycle is version dependent; switching tabs is not necessarily SessionEnd.
+
+## Limits
+
+This watches a real local file and starts an independent coordinator. **A ChatGPT sidebar Page/Canvas is not automatically mapped to that file.** A real file mapping or authorized event adapter is required. Relative-link clicks depend on the frontend renderer.
+
+The watcher must remain running. Thread IDs persist; job IDs are connection scoped. Approval policy is `on-request`; requests stay pending and the watcher cannot approve them. Stop it and handle blocked work in an interactive approval UI. It instructs the coordinator to avoid network, dependency installation, credentials, settings, and watcher-owned output; a prompt is not a security boundary. Workspace sandboxing and host policy remain authoritative.
+
+Input hashes deduplicate identical content, and active edits coalesce to the newest revision. Failures do not automatically retry the same input. Filesystem events cannot identify the author of a change. Append-only publication checks atomic replacement, but does not provide transactions against arbitrary concurrent in-place writers. State stores and stdout logs can contain sensitive project output.
+
+## Tests and license
+
+```sh
+python3 -m unittest discover -s tests -v
+python3 scripts/scan_release.py
+python3 scripts/watch_project.py --help
+```
+
+Tests cover input boundaries, report publication/recovery, renderer invocation, MCP framing, and the actual ten-second watcher loop with a **fake** MCP fixture. These are not live model tests. The installed source was separately exercised by its implementation task in three real MCP turns; that environment-specific result is not a guarantee for another host. See [VALIDATION.md](VALIDATION.md).
+
+Own skill and glue code: [MIT](LICENSE). External dependencies keep their own licenses; see [THIRD_PARTY.md](THIRD_PARTY.md). This is an independent project, not an official OpenAI product.
