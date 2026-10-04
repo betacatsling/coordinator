@@ -56,3 +56,11 @@ All fourteen stable files matched the private coordinator-integrated manifest be
 Source observations reported nineteen backend/board/ownership/registration tests passing on macOS and remote Linux, plus isolated exact-native-ID resumption across TTL. Release tests use temporary state, fake GitHub writes and adapter fixtures; they do not operate production or replay real registration. Coverage includes selected-board scope/pagination/type/status checks, ready generations, admission-only claims, lost-receipt claim deduplication, other-author marker handling, canonical ownership across state directories, runtime-only pending enrollment, changed/running-owner refusal and completed-native-ID proof requirements.
 
 The real user target was not enrolled and desktop visibility/synchronization was not verified. No completed production handoff is claimed. Runtime CODEX_THREAD_ID is an identity hint rather than cryptographic proof, and pending registration is not activation.
+
+## Parallel persistent executor structure
+
+All twenty-one files in the stable parallel manifest matched before copying. The private manifest and isolated/production QA records were excluded. Previously generalized manual instructions and report-helper instructions are retained. Source test session literals were replaced by runtime-generated fixture UUIDs, and the overlap test name now explicitly identifies fake executors. Domain-specific research names were removed from public documentation.
+
+The implementation task reported twenty-six backend/board/ownership/registration/pool tests passing on both hosts and two actual isolated Codex sessions overlapping and recovering their original IDs. The added release tests cover disjoint/overlapping path leases, shared resources, dependency readiness, updating an existing claim once with a task session, missing-claim refusal, fake worker overlap with serialized model callbacks, and an explicitly authorized revision batch. They do not start real sessions or select research work.
+
+This release only changes architecture: default three independent executor slots, serialized coordinator planning/acceptance, per-task persistent sessions, and waiting on conflicts/dependencies. No production research dispatch or user-selected coordinator handoff is claimed; real research task selection remains the user coordinator's responsibility.

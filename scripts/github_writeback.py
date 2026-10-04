@@ -91,3 +91,18 @@ def write_result(config, task, live_project, result, report, accepted, query, dr
     if not existing or existing.get('body')!=body:operations.append({'operation':'update_comment' if existing else 'add_comment','body':body,'comment_id':comment_id})
     if accepted:operations+=status_operations(config,item,query,'accepted')
     return apply(config,task,operations,comment_id,query,dry_run)
+
+
+def write_executor_session(config, task, live_project, thread_id, query, dry_run=True):
+    import uuid
+    if str(uuid.UUID(thread_id))!=thread_id:raise ValueError('Actual executor native ID required')
+    item,issue,viewer=validate_scope(config,task,live_project,query)
+    marker=marker_prefix(config,task['issue_id'],'claim')+task.get('dispatch_key',task['revision_hash'])+' -->'
+    existing=own_comment(issue,viewer,marker)
+    if not existing:raise ValueError('No owned claim; refuse new executor notice')
+    label='执行会话：`'+thread_id+'`'
+    body=existing['body']
+    if label in body:return {'dry_run':dry_run,'operations':[],'comment_id':existing['id']}
+    # Append once to the same claim; no extra comment per polling/recovery.
+    operations=[{'operation':'update_comment','body':body+'\n\n'+label,'comment_id':existing['id']}]
+    return apply(config,task,operations,existing['id'],query,dry_run)

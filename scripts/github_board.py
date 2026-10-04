@@ -16,6 +16,10 @@ def board_members(project, config):
         field=next((f for f in fields.get('nodes',[]) if f.get('id')==b[field_key]),None)
         option=next((o for o in (field or {}).get('options',[]) if o['id']==b[option_key]),None)
         if not option or option['name']!=b[name_key]:raise ValueError('Board option mapping changed; refuse guessed scope')
+    if config.get('manual_dispatch'):
+        field=next((f for f in fields.get('nodes',[]) if f.get('id')==b['status_field_id']),None)
+        option=next((o for o in (field or {}).get('options',[]) if o['id']==b.get('triage_option_id')),None)
+        if not option or option['name']!=b.get('triage_option_name'):raise ValueError('Explicit batch requires verified triage option mapping')
     members={}
     for item in project['items']['nodes']:
         issue=item.get('content') or {}
@@ -30,6 +34,11 @@ def board_members(project, config):
     return members
 
 
+def manually_authorized(config, task, card):
+    approval=config.get('manual_dispatch') or {}
+    return bool(approval.get('id') and approval.get('tasks',{}).get(task['issue_id'])==task['revision_hash'] and not card.get('excluded') and card.get('status_option_id')==config['board'].get('triage_option_id'))
+
+
 def select_tasks(project, config, tasks, observations):
     members=board_members(project,config);selected=[]
     for issue_id in set(observations)-set(members):observations[issue_id]['eligible']=False
@@ -39,12 +48,15 @@ def select_tasks(project, config, tasks, observations):
         observations[issue_id]=dict(value,generation=generation)
     for task in tasks:
         observed=observations.get(task['issue_id'],{})
-        if not observed.get('eligible'):continue
+        manual=manually_authorized(config,task,observed)
+        if not observed.get('eligible') and not manual:continue
         task=dict(task);task['ready_generation']=observed['generation']
-        task['dispatch_key']=hashlib.sha256((task['issue_id']+'\0'+task['revision_hash']+'\0'+str(observed['generation'])).encode()).hexdigest()
+        task['dispatch_key']=hashlib.sha256((task['issue_id']+'\0'+task['revision_hash']+'\0'+('manual:'+config['manual_dispatch']['id'] if manual else str(observed['generation']))).encode()).hexdigest()
+        if manual:task['manual_dispatch_id']=config['manual_dispatch']['id']
         selected.append(task)
     return selected
 
 
 def assert_claimable(project, config, task):
-    if not board_members(project,config).get(task['issue_id'],{}).get('eligible'):raise ValueError('Card is no longer an eligible TODO/待做 task; do not claim')
+    card=board_members(project,config).get(task['issue_id'],{})
+    if not card.get('eligible') and not manually_authorized(config,task,card):raise ValueError('Card is no longer an eligible TODO/待做 task; do not claim')

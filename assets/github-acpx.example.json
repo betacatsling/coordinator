@@ -26,6 +26,8 @@
     "server": "/absolute/mcp-agents/server.js",
     "bridge_state_root": "/absolute/private/executor-state",
     "checks": [],
-    "timeout": 240
-  }
+    "timeout": 240,
+    "allowed_resources": []
+  },
+  "max_parallel_executors": 3
 }

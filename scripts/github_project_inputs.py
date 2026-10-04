@@ -25,6 +25,6 @@ def normalize_project(project, selected_node_id, user_login, result_comment_ids=
         accepted.sort(key=lambda c:c['id'])
         revision={'issue_id':issue['id'],'body':body,'comments':accepted}
         digest=hashlib.sha256(json.dumps(revision,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
-        tasks.append({'issue_id':issue['id'],'url':issue.get('url'),'instructions':body,
+        tasks.append({'issue_id':issue['id'],'issue_number':issue.get('number'),'url':issue.get('url'),'instructions':body,
                       'user_comments':accepted,'revision_hash':digest})
     return tasks
