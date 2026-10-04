@@ -49,3 +49,16 @@ The reminder asks the current coordinator to read the simple H2 tasks, process o
 On 2026-10-04, Codex CLI 0.159.0 delivered a PreToolUse additionalContext reminder inside the same isolated current session. The coordinator ran pwd only and correctly reported both task titles without reading PROJECT.md or pending files. The exact project-local PreToolUse definition was reviewed and trusted through /hooks. PostToolUse, UserPromptSubmit, and Stop output contracts, dedupe, loop guard, project scope, stale suppression, and exact-revision acknowledgement were tested directly as protocol responses; do not describe them as native event runs. No automatic idle wakeup was tested or provided.
 
 Templates are optional project-level examples, not installation-time activation. Installing these skill files does not configure or trust real-project hooks, stop watchers, or change global hook rules. Review each chosen definition when enabling a project; never use trust-all as a substitute for that review.
+
+## GitHub Project backend
+
+Current release stage: fixed-session binding, GitHub parsing/deduplication, and optional independent executor/acceptance are included. Reports remain local with no network URL. Production Issue comments, Project state writeback, hosted reports, and production executor ownership are incomplete or unconfigured. The observed implementation did not start the real Project event loop. See VALIDATION.md; do not claim production completion from fixture or recovery checks.
+
+For the selected repository and Project, follow [references/github-acpx.md](references/github-acpx.md) and `scripts/project_acpx.py`:
+
+1. Read Issue bodies and user comments from that Project and repository. Accept all labels and unlabelled Issues. Submitted versions enter the queue directly; there is no ten-second quiet condition or implicit Ready gate. Polling is ordinary API detection, not model waiting.
+2. Initialize one coordinator once and persist Project node ID, repository, acpx record/session IDs and provider thread ID. Resume that exact identity thereafter. Failed recovery blocks; never create a replacement session automatically. Baseline historical versions before enabling real events.
+3. The coordinator only assigns and verifies. An independently scoped MCP executor implements; program-run checks and actual source return to the original coordinator for acceptance. Use explicit owned paths and checks; do not ask users to repeat these workflow rules in every prompt.
+4. Produce a concise result, verification and HTML report. Write Issue result comments and Project state only after the selected destination and field mapping are established; record result comment IDs to prevent output loops. A local report path is not a network link: do not claim an accessible HTML URL until hosting/access is verified.
+
+Keep the old file watcher and native hooks as optional backends; they do not form part of the default GitHub loop. Do not change answer-me-with-html. Do not enable competing real-project watchers, copy credentials between hosts, expand permissions without authorization, or auto-approve unsafe actions.

@@ -1,0 +1,16 @@
+{
+  "source": {"type": "github"},
+  "project_node_id": "REPLACE_WITH_SELECTED_PROJECT_NODE_ID",
+  "repository": "OWNER/REPOSITORY",
+  "user_login": "AUTHORIZED_USER",
+  "workspace": "/absolute/repository/workspace",
+  "node": "/absolute/node",
+  "acpx": "/absolute/acpx-prefix/node_modules/acpx/dist/cli.js",
+  "adapter": "/absolute/acpx-prefix/node_modules/@agentclientprotocol/codex-acp/dist/index.js",
+  "codex": "/absolute/codex",
+  "html_cli": "/absolute/answer-me-with-html/scripts/am.mjs",
+  "permissions": "reads",
+  "poll_seconds": 15,
+  "ttl": 5,
+  "timeout": 120
+}

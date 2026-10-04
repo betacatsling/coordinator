@@ -2,6 +2,18 @@
 
 A Codex skill and local document watcher for project work. [中文](README.zh-CN.md)
 
+## GitHub input mode: foundation release
+
+This release includes the fixed acpx coordinator binding, GitHub input parser and durable revision queue, plus an optional implementation executor and coordinator acceptance flow. See [setup and commands](references/github-acpx.md), the [generic configuration](assets/github-acpx.example.json), and [validation](VALIDATION.md). Existing local-file watching and native reminder hooks remain optional.
+
+The workflow binds one GitHub Project and one repository. Explicit initialization creates one fixed acpx coordinator, then resumes its saved identity. In-scope Issue bodies and comments from the configured user are input regardless of labels, including issues with no labels. `run` uses ordinary API polling, with a default 15-second cadence and no ten-second quiet gate or model calls spent waiting. Historical versions are baselined on real GitHub initialization. Changing a binding or interrupted work requires explicit investigation, not automatic replacement or replay.
+
+The coordinator delegates work and checks acceptance. With an explicit executor configuration, an independent MCP executor implements and runs fixed checks; the original coordinator assesses actual source and observations. Without that configuration, a turn produces coordination guidance and does not complete the Issue. Owned paths constrain the assignment and artifact checks, but are not a separate operating-system file-access boundary.
+
+**Production writeback is unfinished.** Issue result comments, Project status writeback, hosted reader-accessible HTML URLs, and production executor file ownership are not configured or completed in this release. Reports are local and `url` is null. No real Project event loop was started by the implementation task. Fixed-session restart on macOS/Linux and isolated executor/acceptance scenarios were verified separately; they do not prove production delivery. The intended final Issue result is a concise conclusion, observed evidence and an accessible HTML details link. The external HTML renderer remains unchanged.
+
+GitHub mode also requires GitHub CLI authentication, acpx 0.19.4 and @agentclientprotocol/codex-acp 2.1.1 installed separately. Configure explicit runtime paths; do not copy credentials or real binding state. `init` creates the fixed coordinator; `once` handles queued input; `run` polls until Ctrl-C/SIGTERM, then settles an admitted turn before releasing its lock. Enable a real event loop only after completing the remaining production setup and checking other input owners.
+
 Write tasks under unique `##` headings in `PROJECT.md`. After **10 quiet seconds**, the watcher queues changed tasks in a local inbox. Explicit `--thread-id` binding can continue an eligible existing MCP thread. The watcher never creates a coordinator. Completed results become dated HTML reports linked from the document.
 
 View the [two-task demo](examples/simple-two-task-demo/PROJECT.md), [report HTML source/download](examples/simple-two-task-demo/reports/report.html), and [runnable example](examples/simple-two-task-demo/example.py). The report is a sanitized copy of a real implementation demo. GitHub displays HTML source; download it to view locally.
