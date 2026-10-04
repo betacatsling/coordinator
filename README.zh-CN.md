@@ -35,7 +35,11 @@ python3 scripts/watch_project.py --project /absolute/path/to/workspace
 
 默认只响应后续输入修改；加 `--run-current` 可在 10 秒静默后提交当前内容。可用 `--server`、`--html-cli`、`--node` 指定路径，也可用上述环境变量及 `PROJECT_DELEGATION_NODE`。监听器有自己的 stdio MCP 连接，不会配置桌面 MCP。
 
-默认命令只写 `.project-delegation/pending.json`，不会自动送入当前 UI session；队列模式不需要 bridge 或 renderer。加 `--thread-id EXISTING_THREAD_ID` 只能继续同工作目录、未加载且 MCP 可访问的已有 thread。绑定不可用、已加载或目录不符时阻塞，不创建替代 coordinator。当前没有 UI 自动投递适配器。
+默认命令只写 `.project-delegation/pending.json`，本身不会送入当前 UI session；队列模式不需要 bridge 或 renderer。加 `--thread-id EXISTING_THREAD_ID` 只能继续同工作目录、未加载且 MCP 可访问的已有 thread。绑定不可用、已加载或目录不符时阻塞，不创建替代 coordinator。
+
+提醒当前 coordinator 可使用[原生同步 hook 模板](assets/reminder-hooks.example.json)。替换脚本和项目路径，仅合并新增条目到目标项目 `.codex/hooks.json`，用 Codex `/hooks` 审核并信任具体定义。监听器保持队列模式；工具/用户输入事件通过 `hookSpecificOutput.additionalContext` 将待处理任务提醒注入同一会话。Stop 可对每个版本请求一次继续执行。提醒要求 coordinator 验收、发布 HTML 报告，再确认处理准确版本；送达提醒本身不算任务完成，新修改仍待处理。
+
+**没有 hook 事件就没有提醒；完全 idle 的会话不会自动唤醒。** 当前回合需要主动等待时可用 `python3 scripts/wait_for_pending.py --project /absolute/project --timeout 45`；它是有界等待，不是后台唤醒服务。安装 skill 不会启用或信任 hook。原生实测仅覆盖 PreToolUse，其他事件仅做协议测试，见 [VALIDATION.md](VALIDATION.md)。
 
 唯一 H2 标题标识任务，改标题视为新任务；成功完成且未变化的任务跳过。代码围栏中的标题及 `## 执行报告` 不算任务。旧 `delegation:input` 标记仍兼容。执行期间修改合并为最新输入，失败不自动重试。手动协调遵循 executor 简报和文件所有权；监听器执行有界步骤，禁止递归派发。
 

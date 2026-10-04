@@ -14,3 +14,11 @@ Validated on macOS with Python 3.9.6 and Node.js 26.8.1 on 2026-10-04.
 The implementation task reported an isolated real two-task MCP run and HTML rendering for this source release. The included demo contains only its task document, two Python files, and sanitized report; file links were changed to relative paths. No real thread IDs, project inputs, logs, or generated user reports are included. The release tests above use fixtures and do not independently replay model execution. Linux support follows POSIX APIs and has a CI workflow. The initial release passed Linux CI; this update must pass its own publication run. Windows is unsupported.
 
 The secret scan is heuristic. It is not a complete credential detector. Review file contents before publishing changes. External tool compatibility can change; use the documented tested versions when reproducing behavior.
+
+## Native reminder update
+
+The five finalized files matched native-hook-release.json before removing a project-specific name from public documentation. No logs, session identifiers, actual hook trust records, private paths, or real project state are included.
+
+Five additional fixture tests pass for PreToolUse/PostToolUse/UserPromptSubmit response contracts, per-session revision deduplication, Stop continuation guarding, stale input suppression, project scope, and exact acknowledgement that preserves newer edits. Delivery alone does not acknowledge tasks; undelivered revisions cannot be acknowledged. These tests invoke the handler directly and are not native hook runs.
+
+The implementation task separately verified PreToolUse in a real Codex CLI 0.159.0 current session: the coordinator ran only pwd and quoted both task titles from injected context without reading the project files. Other events were protocol-tested only. A fully idle session with no event is not automatically woken. Hook templates remain optional and require review of exact project definitions.

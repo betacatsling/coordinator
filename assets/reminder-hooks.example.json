@@ -1,0 +1,49 @@
+{
+  "description": "Native synchronous coordinator reminders; replace script/project paths and trust via /hooks",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /absolute/skill/scripts/coordinator_reminder.py --project /absolute/project",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /absolute/skill/scripts/coordinator_reminder.py --project /absolute/project",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /absolute/skill/scripts/coordinator_reminder.py --project /absolute/project",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /absolute/skill/scripts/coordinator_reminder.py --project /absolute/project --wait-seconds 12",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
