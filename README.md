@@ -34,6 +34,12 @@ Executor completion means its turn ended. Acceptance records reviewed implementa
 
 Stop only a watcher you started and intend to stop. Detached executors may outlive an MCP connection; preserve their original sessions, worktrees and receipts until reviewed. Remove only your own MCP entries and installed skill files when uninstalling.
 
+## Local WebUI
+
+Run `python3 scripts/web_dashboard.py --config /absolute/project-config.json`, then open the printed `http://127.0.0.1:18766` address on the same computer. Repeat `--config` to view multiple projects; use `--port 0` for a free local port. See [dashboard setup and limits](references/web-dashboard.md).
+
+The dashboard shows saved project/task/executor state and report downloads. It is read-only: no dispatch, acceptance, GitHub writes or live liveness probes. HTTP/API and DOM contract fixtures do not establish actual browser rendering; desktop/mobile visual QA remains unverified.
+
 ## Documentation and tests
 
 - [Skill workflow](SKILL.md)

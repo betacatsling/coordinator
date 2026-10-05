@@ -34,6 +34,12 @@ Windows 通过配置中的 `codex.exe` 和官方 `app-server proxy` 连接已有
 
 只停止你自己启动且明确要停止的 watcher。断开 MCP 不一定停止执行器；审阅前保留原始会话、worktree 和回执。卸载时只移除自己添加的 MCP 配置和 skill 文件。
 
+## 本地 WebUI
+
+运行 `python3 scripts/web_dashboard.py --config /absolute/project-config.json`，再用同一台电脑的浏览器打开打印的地址，默认 `http://127.0.0.1:18766`。可重复 `--config` 查看多个项目，用 `--port 0` 自动选择空闲本地端口。见 [WebUI 使用与限制](references/web-dashboard.md)。
+
+页面只读展示已保存的项目、任务、执行器状态及报告下载，不派发、不验收、不回写 GitHub，也不探测实时存活状态。HTTP/API 和 DOM fixture 测试不等于真实浏览器渲染验证；桌面/手机视觉 QA 尚未完成。
+
 ## 文档与测试
 
 - [Skill 工作流](SKILL.md)
