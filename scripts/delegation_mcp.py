@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Stdio MCP for one bound project coordinator (JSON-RPC transport, not chat JSON)."""
 import argparse
+import hashlib
+from pathlib import Path
+import uuid
 import json
 import sys
 from delegation_service import DelegationService
@@ -25,6 +28,29 @@ TOOLS = [
 ]
 
 
+class RequestService:
+    """Host-owned stdio metadata, not model arguments, identifies each caller.
+
+    The private stdio transport is the trust boundary. This is not authentication
+    for an arbitrary network client and must not be exposed as an open endpoint.
+    """
+    def __init__(self, config_path):
+        self.config_path = Path(config_path).resolve(strict=True)
+        self.config_hash = hashlib.sha256(self.config_path.read_bytes()).hexdigest()
+
+    def for_request(self, params):
+        meta = params.get('_meta')
+        owner = meta.get('threadId') if isinstance(meta, dict) else None
+        try:
+            if not isinstance(owner, str) or str(uuid.UUID(owner)) != owner:
+                raise ValueError()
+        except (ValueError, AttributeError):
+            raise ValueError('Host MCP request _meta.threadId is required; reconnect with a Codex client that supplies per-call thread metadata')
+        if hashlib.sha256(self.config_path.read_bytes()).hexdigest() != self.config_hash:
+            raise ValueError('Configuration changed; reconnect with reviewed configuration')
+        return DelegationService(self.config_path, caller_thread_id=owner)
+
+
 def dispatch(service, message):
     method = message.get('method')
     if method == 'initialize':
@@ -44,7 +70,11 @@ def dispatch(service, message):
     if not isinstance(args, dict) or set(args) - set(shape['properties']) or set(shape['required']) - set(args):
         raise ValueError('Invalid tool arguments; no scope, shell or identity overrides allowed')
     try:
-        result = getattr(service, tool['name'])(**args)
+        request_service = service.for_request(params)
+        try:
+            result = getattr(request_service, tool['name'])(**args)
+        finally:
+            request_service.close()
         return {'content': [{'type': 'text', 'text': json.dumps(result, ensure_ascii=False)}], 'structuredContent': result}
     except Exception as exc:
         return {'isError': True, 'content': [{'type': 'text', 'text': str(exc)}]}
@@ -70,7 +100,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', required=True)
     args = parser.parse_args()
-    serve(DelegationService(args.config), sys.stdin, sys.stdout)
+    serve(RequestService(args.config), sys.stdin, sys.stdout)
 
 
 if __name__ == '__main__':

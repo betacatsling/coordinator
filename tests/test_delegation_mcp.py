@@ -15,7 +15,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from delegation_service import DelegationService
-from delegation_mcp import dispatch, serve
+from delegation_mcp import dispatch, serve, RequestService
 from issue_worktree import git, create
 from mcp_executor import _verify, validated_receipt, task_identity
 
@@ -233,8 +233,10 @@ class DelegationTests(unittest.TestCase):
 
     def test_stdio_dispatch_worker_survives_connection_exit(self):
         task=self.service.tasks_list()['tasks'][0]
-        request={'jsonrpc':'2.0','id':1,'method':'tools/call','params':{'name':'executor_start','arguments':dict(issue_id=task['issue_id'],revision_hash=task['revision_hash'],assignment='Actual stdio dispatch',owned_paths=['p0.txt'])}}
-        run=subprocess.run([sys.executable,str(ROOT/'scripts/delegation_mcp.py'),'--config',str(self.config_path)],input=json.dumps(request)+'\n',text=True,capture_output=True,timeout=10)
+        request={'jsonrpc':'2.0','id':1,'method':'tools/call','params':{'_meta':{'threadId':self.owner},'name':'executor_start','arguments':dict(issue_id=task['issue_id'],revision_hash=task['revision_hash'],assignment='Actual stdio dispatch',owned_paths=['p0.txt'])}}
+        env = dict(os.environ)
+        env.pop('CODEX_THREAD_ID', None)
+        run=subprocess.run([sys.executable,str(ROOT/'scripts/delegation_mcp.py'),'--config',str(self.config_path)],input=json.dumps(request)+'\n',text=True,capture_output=True,timeout=10,env=env)
         self.assertEqual(run.returncode,0,run.stderr)
         job=json.loads(run.stdout)['result']['structuredContent']
         self.assertEqual(self.wait(job)['status'],'verified')
@@ -277,11 +279,75 @@ class DelegationTests(unittest.TestCase):
         self.assertEqual(calls.count('codex-start'),1)
         self.assertEqual(calls.count('codex-reply-start'),0)
 
+    def test_discovery_does_not_require_binding_or_create_runtime(self):
+        workspace = self.base / 'discovery-only'
+        workspace.mkdir()
+        config = self.base / 'discovery-config.json'
+        config.write_text(json.dumps({'workspace': str(workspace)}))
+        adapter = RequestService(config)
+        self.assertIn('serverInfo', dispatch(adapter, {'method': 'initialize'}))
+        self.assertEqual(dispatch(adapter, {'method': 'ping'}), {})
+        self.assertEqual(len(dispatch(adapter, {'method': 'tools/list'})['tools']), 6)
+        self.assertFalse((workspace / '.project-delegation').exists())
+
+    def test_stdio_without_environment_uses_each_host_request_identity(self):
+        requests = [
+            {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize'},
+            {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list'},
+        ]
+        for i, meta in enumerate([None, {}, {'threadId': 'invalid'},
+                                  {'threadId': str(uuid.uuid4())},
+                                  {'threadId': self.owner}, None], 3):
+            params = {'name': 'tasks_list', 'arguments': {}}
+            if meta is not None:
+                params['_meta'] = meta
+            requests.append({'jsonrpc': '2.0', 'id': i, 'method': 'tools/call', 'params': params})
+        env = dict(os.environ)
+        env.pop('CODEX_THREAD_ID', None)
+        run = subprocess.run([sys.executable, str(ROOT/'scripts/delegation_mcp.py'),
+                              '--config', str(self.config_path)],
+                             input=''.join(json.dumps(x)+'\n' for x in requests),
+                             text=True, capture_output=True, timeout=10, env=env)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        output = [json.loads(line)['result'] for line in run.stdout.splitlines()]
+        self.assertEqual(output[0]['serverInfo']['name'], 'project-delegation')
+        self.assertEqual(len(output[1]['tools']), 6)
+        for i in (2, 3, 4, 5, 7):
+            self.assertTrue(output[i]['isError'])
+        self.assertIn('_meta.threadId', output[2]['content'][0]['text'])
+        self.assertIn('bound fixed coordinator', output[5]['content'][0]['text'])
+        self.assertEqual(len(output[6]['structuredContent']['tasks']), 5)
+
+    def test_mcp_never_uses_server_environment_as_caller_identity(self):
+        adapter = RequestService(self.config_path)
+        result = dispatch(adapter, {'method': 'tools/call',
+                                    'params': {'name': 'tasks_list', 'arguments': {}}})
+        self.assertTrue(result['isError'])
+        self.assertIn('_meta.threadId', result['content'][0]['text'])
+        with self.assertRaisesRegex(ValueError, 'Invalid tool arguments'):
+            dispatch(adapter, {'method': 'tools/call', 'params': {
+                'name': 'tasks_list', 'arguments': {'threadId': self.owner}}})
+        self.config['repository'] = 'changed/repository'
+        self.config_path.write_text(json.dumps(self.config))
+        result = dispatch(adapter, {'method': 'tools/call', 'params': {
+            'name': 'tasks_list', 'arguments': {}, '_meta': {'threadId': self.owner}}})
+        self.assertTrue(result['isError'])
+        self.assertIn('Configuration changed', result['content'][0]['text'])
+
+    def test_authenticated_dispatch_passes_identity_to_detached_worker(self):
+        with patch.dict(os.environ, CODEX_THREAD_ID=''):
+            service = DelegationService(self.config_path, caller_thread_id=self.owner)
+            self.addCleanup(service.close)
+            task = service.tasks_list()['tasks'][0]
+            job = service.executor_start(task['issue_id'], task['revision_hash'],
+                                         'Implement bounded fixture', ['p0.txt'])
+            self.assertEqual(self.wait(job)['status'], 'verified')
+
     def test_stdio_tools_list_call_and_no_override_surface(self):
         requests = [{'jsonrpc':'2.0','id':1,'method':'initialize'},
             {'jsonrpc':'2.0','method':'notifications/initialized'},
             {'jsonrpc':'2.0','id':2,'method':'tools/list'},
-            {'jsonrpc':'2.0','id':3,'method':'tools/call','params':{'name':'tasks_list','arguments':{}}},
+            {'jsonrpc':'2.0','id':3,'method':'tools/call','params':{'name':'tasks_list','arguments':{},'_meta':{'threadId':self.owner}}},
             {'jsonrpc':'2.0','id':4,'method':'tools/call','params':{'name':'executor_start','arguments':{'shell':'bad'}}}]
         run=subprocess.run([sys.executable,str(ROOT/'scripts/delegation_mcp.py'),'--config',str(self.config_path)],input=''.join(json.dumps(x)+'\n' for x in requests),text=True,capture_output=True,timeout=10)
         self.assertEqual(run.returncode,0,run.stderr)

@@ -10,7 +10,7 @@ Run: `PROJECT_DELEGATION_TEST_NODE=python3 python3 -m unittest discover -s tests
 
 ## Not yet verified live
 
-This fresh-only candidate has not been installed or activated on a user host. Codex MCP runtime identity propagation, live GitHub mutation, native desktop notification delivery and complete model-driven execution still require a controlled end-to-end run. Reports are local files; hosted report links are not implemented in the new service. Accepted worktrees remain unmerged.
+This fresh-only candidate has not been installed or activated on a user host. Live GitHub mutation, native desktop notification delivery and complete model-driven execution still require a controlled end-to-end run. The installed-host checks below verify MCP identity routing only. Reports are local files; hosted report links are not implemented in the new service. Accepted worktrees remain unmerged.
 
 Fresh initialization uses `.project-delegation/runtime`. Existing repository files, running agents and unrelated state are not deleted or terminated. Stop competing old automation explicitly before activating the new notifier.
 
@@ -29,3 +29,13 @@ Mac release verification ran 140 tests in 11.870 seconds: 139 passed and one rea
 A separate CLI HTTP smoke used two explicitly synthetic temporary projects and an ephemeral IPv4 loopback port. HTML/CSS/JS, the two-project catalog, five saved tasks/executors and rejection of POST with HTTP 405 passed. The owned temporary server was stopped after testing. No live user project, installed skill or MCP configuration was read or changed.
 
 Actual browser rendering, desktop/mobile visual layout, dark-theme rendering and browser interaction have not been verified. The optional browser smoke script requires separately installed Playwright; no software was installed for this release. Saved status is not proof of worker liveness, and report downloads are not proof of acceptance.
+
+## MCP handshake and host identity — 2026-10-05
+
+MCP discovery no longer depends on a thread environment variable. Business calls require the host-owned per-request `_meta.threadId`, checked against the existing binding and scope; missing/malformed/mismatched metadata returns a tool error without exiting. The MCP adapter does not fall back to the server environment or accept a model-supplied identity argument.
+
+Mac release verification ran 144 tests in 12.518 seconds: 143 passed and one real-Windows-kernel case was skipped. Release hygiene, JavaScript syntax and whitespace checks passed. Previous WebUI and 106-test historical evidence above is retained.
+
+The implementation task reported five installed-host checks passing with Codex 0.159.2. This release independently passed all five on macOS with installed Codex 0.160.0: actual initialize/list/call sequence; host-supplied matching thread metadata; no CODEX_THREAD_ID in the MCP process; a fixture read by the bound thread; and rejection of a second actual ephemeral host thread. Run the opt-in harness with `python3 tests/codex_host_smoke.py --codex PATH`.
+
+The harness uses credential-free temporary CODEX_HOME/state and a separate owned stdio test host, leaving the existing daemon unchanged. It requests no model turn, GitHub call or executor launch. These checks do not establish model-driven execution, live write-back, native notifications or browser rendering. No installed skill or real project state was changed during publication.

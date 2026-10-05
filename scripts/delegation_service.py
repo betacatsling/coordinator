@@ -39,7 +39,7 @@ ACTIVE = {'reserved', 'running', 'recovery_required', 'waiting_for_input'}
 
 
 class DelegationService:
-    def __init__(self, config_path):
+    def __init__(self, config_path, *, caller_thread_id=None):
         self.config_path = Path(config_path).resolve(strict=True)
         self.config = json.loads(self.config_path.read_text(encoding='utf-8'))
         c = self.config
@@ -57,7 +57,10 @@ class DelegationService:
         self.scope = {key: c[key] for key in ('project_node_id', 'repository', 'user_login')}
         self.scope['workspace'] = str(self.workspace)
         self.config_hash = hashlib.sha256(self.config_path.read_bytes()).hexdigest()
-        self.owner = os.environ.get('CODEX_THREAD_ID', '')
+        # Direct CLI/worker callers use their runtime environment. MCP callers must
+        # supply host request context explicitly; never fall back to server env.
+        self.owner = (os.environ.get('CODEX_THREAD_ID', '')
+                      if caller_thread_id is None else caller_thread_id)
         self._authorize()
         if not c.get('executor', {}).get('enabled') or not c['executor'].get('isolate_worktree'):
             raise ValueError('Delegation requires enabled isolated executors')
@@ -221,7 +224,8 @@ class DelegationService:
         job.update(status='running', mode=mode, launched_at=time.time())
         with open(self.root / (job['id'] + '.worker.log'), 'a', encoding='utf-8') as log:
             process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), '--config', str(self.config_path), '--worker', job['id']],
-                stdin=subprocess.DEVNULL, stdout=log, stderr=log, cwd=str(self.workspace), **detached_process_options())
+                stdin=subprocess.DEVNULL, stdout=log, stderr=log, cwd=str(self.workspace),
+                env=dict(os.environ, CODEX_THREAD_ID=self.owner), **detached_process_options())
         job['worker_pid'] = process.pid
         # Reap while the stdio server lives; daemonization keeps workers independent
         # when the coordinator closes its MCP connection.

@@ -16,7 +16,7 @@ Use macOS, Linux or the native Windows portability candidate, Python 3.9+, Node.
 
 1. Review [the example configuration](assets/fresh-config.example.json), fill in the selected repository, Project, authorized user and exact board mappings, and review executor and write-back permissions
 2. From the selected workspace, run `python3 /absolute/skill/scripts/coordinator_bootstrap.py --config /absolute/config.json init`
-3. Explicitly register `python3 /absolute/skill/scripts/delegation_mcp.py --config /absolute/config.json` using your Codex client's supported MCP setup. Preserve the authentic runtime context; never copy a thread ID into global server configuration
+3. Explicitly register `python3 /absolute/skill/scripts/delegation_mcp.py --config /absolute/config.json` using your Codex client's supported MCP setup. Use a host that supplies per-call `_meta.threadId`; MCP startup needs no thread environment variable. Never copy a thread ID into global server configuration
 4. Verify discovery of the six coordinator tools in the chosen session and a successful read-only `tasks_list` call
 5. Optionally initialize the watcher with `board_notifier.py --config /absolute/config.json init --baseline current`, then run its `watch` command
 

@@ -16,7 +16,7 @@
 
 1. 参考[配置示例](assets/fresh-config.example.json)，填写仓库、Project、授权用户及精确的看板字段映射，确认执行器和回写权限
 2. 在所选项目目录运行 `python3 /absolute/skill/scripts/coordinator_bootstrap.py --config /absolute/config.json init`
-3. 按实际 Codex 客户端支持的方式显式注册 `python3 /absolute/skill/scripts/delegation_mcp.py --config /absolute/config.json`。使用会话真实运行环境，不要将复制的线程 ID 写进全局 MCP 配置
+3. 按实际 Codex 客户端支持的方式显式注册 `python3 /absolute/skill/scripts/delegation_mcp.py --config /absolute/config.json`。客户端须逐次提供 `_meta.threadId`；MCP 启动不需要线程环境变量，不要将复制的线程 ID 写进全局 MCP 配置
 4. 确认当前会话实际发现六个协调工具，并成功调用只读的 `tasks_list`
 5. 如需通知，先运行 `board_notifier.py --config /absolute/config.json init --baseline current`，再启动其 `watch` 命令
 
