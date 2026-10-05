@@ -12,6 +12,8 @@ This is experimental, fresh-only code. There is no state conversion, ownership t
 
 ## Setup
 
+Follow the [Installation guide (中文)](references/installation.md) for installation, MCP registration and first-run verification.
+
 Use macOS, Linux or the native Windows portability candidate, Python 3.9+, Node.js, authenticated Codex and GitHub CLIs, and separately installed [mcp-agents](https://github.com/thomaswitt/mcp-agents). The chosen coordinator must be loaded in a supported shared native Codex AppServer.
 
 1. Review [the example configuration](assets/fresh-config.example.json), fill in the selected repository, Project, authorized user and exact board mappings, and review executor and write-back permissions
@@ -35,6 +37,8 @@ Executor completion means its turn ended. Acceptance records reviewed implementa
 Stop only a watcher you started and intend to stop. Detached executors may outlive an MCP connection; preserve their original sessions, worktrees and receipts until reviewed. Remove only your own MCP entries and installed skill files when uninstalling.
 
 ## Local WebUI
+
+Download and open the [standalone offline demo](examples/dashboard-demo.html) to preview synthetic data without connecting to a project.
 
 Run `python3 scripts/web_dashboard.py --config /absolute/project-config.json`, then open the printed `http://127.0.0.1:18766` address on the same computer. Repeat `--config` to view multiple projects; use `--port 0` for a free local port. See [dashboard setup and limits](references/web-dashboard.md).
 

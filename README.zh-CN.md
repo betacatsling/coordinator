@@ -12,6 +12,8 @@
 
 ## 配置
 
+完整步骤见[安装与首次运行](references/installation.md)，包括 skill、MCP 接入、身份核验和看板启动。
+
 需要 macOS、Linux 或原生 Windows 移植候选版本、Python 3.9+、Node.js、已认证的 Codex 和 GitHub CLI，以及另行安装的 [mcp-agents](https://github.com/thomaswitt/mcp-agents)。所选 coordinator 必须已加载在受支持的共享原生 Codex AppServer 中。
 
 1. 参考[配置示例](assets/fresh-config.example.json)，填写仓库、Project、授权用户及精确的看板字段映射，确认执行器和回写权限
@@ -35,6 +37,8 @@ Windows 通过配置中的 `codex.exe` 和官方 `app-server proxy` 连接已有
 只停止你自己启动且明确要停止的 watcher。断开 MCP 不一定停止执行器；审阅前保留原始会话、worktree 和回执。卸载时只移除自己添加的 MCP 配置和 skill 文件。
 
 ## 本地 WebUI
+
+可下载并在浏览器打开[独立离线演示](examples/dashboard-demo.html)，仅展示示例数据，不连接真实项目。
 
 运行 `python3 scripts/web_dashboard.py --config /absolute/project-config.json`，再用同一台电脑的浏览器打开打印的地址，默认 `http://127.0.0.1:18766`。可重复 `--config` 查看多个项目，用 `--port 0` 自动选择空闲本地端口。见 [WebUI 使用与限制](references/web-dashboard.md)。
 

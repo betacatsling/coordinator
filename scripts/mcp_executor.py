@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Bounded, durable independent executor turns and controller-run evidence."""
-import fcntl
+from platform_support import acquire_lock
 import hashlib
 import json
 from pathlib import Path
@@ -29,13 +29,10 @@ def _receipt_lock(path):
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(str(path) + '.lock', 'a') as handle:
         try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquire_lock(handle, blocking=False)
         except BlockingIOError:
             raise ExecutorRecoveryRequired('Executor receipt is in use by another controller')
-        try:
-            yield
-        finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
+        yield  # Closing the handle releases the OS lock on both platforms.
 
 
 def _validate(config):

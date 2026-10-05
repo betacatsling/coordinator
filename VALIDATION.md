@@ -39,3 +39,7 @@ Mac release verification ran 144 tests in 12.518 seconds: 143 passed and one rea
 The implementation task reported five installed-host checks passing with Codex 0.159.2. This release independently passed all five on macOS with installed Codex 0.160.0: actual initialize/list/call sequence; host-supplied matching thread metadata; no CODEX_THREAD_ID in the MCP process; a fixture read by the bound thread; and rejection of a second actual ephemeral host thread. Run the opt-in harness with `python3 tests/codex_host_smoke.py --codex PATH`.
 
 The harness uses credential-free temporary CODEX_HOME/state and a separate owned stdio test host, leaving the existing daemon unchanged. It requests no model turn, GitHub call or executor launch. These checks do not establish model-driven execution, live write-back, native notifications or browser rendering. No installed skill or real project state was changed during publication.
+
+## Installation guide and offline example — 2026-10-05
+
+The installation guide and standalone synthetic-data dashboard demo are included and linked from both READMEs. Mac verification ran 144 tests in 12.391 seconds (143 passed, one Windows-kernel test skipped), including the executor receipt lock using the shared cross-platform helper. Both embedded demo scripts and WebUI scripts passed JavaScript syntax checks; release hygiene and whitespace checks passed. No browser visual validation or native Windows E2E is claimed. No installation or deployment was performed.
