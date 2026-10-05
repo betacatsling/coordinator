@@ -79,7 +79,10 @@ class ExecutorLifecycleTests(unittest.TestCase):
         resumed = resume_assignment('correct rejection', self.config, self.receipt, 'unused')
         self.assertEqual(resumed['thread_id'], first['thread_id'])
         self.assertEqual(resumed['workspace'], first['workspace'])
-        self.assertEqual(resumed['previous_turns'][0]['artifacts'], first['artifacts'])
+        self.assertEqual(resumed['previous_turns'][0]['checks'], first['checks'])
+        self.assertNotIn('artifacts', first)
+        self.assertNotIn('artifacts', resumed)
+        self.assertNotIn('sha256', json.dumps(resumed))
         starts = [name for name, _ in FakeMCP.calls if name.endswith('start')]
         self.assertEqual(starts, ['codex-start', 'codex-reply-start'])
         self.assertNotEqual(resumed['attempt_id'], first['attempt_id'])

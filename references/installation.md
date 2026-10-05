@@ -185,7 +185,9 @@ Windows 用 `python`。这里必须使用实际会话注入的 `CODEX_THREAD_ID`
 
 Coordinator 首次通过 `tasks_list` 读取当前任务，按授权范围分派可独立执行的 executor，然后结束当前一轮。不要通过长时间 sleep 或反复轮询占住会话。Executor 结果与完成通知先持久保存，再尝试送回同一个 coordinator；后续看板变化也送到这个会话。
 
-完成通知到达后，coordinator 用 `executor_status` / `executor_result` 检查结果，需要修正时用 `executor_continue` 继续原会话，核验后才调用 `task_finish`。看板变化通知到达时，先重新调用 `tasks_list` 对照当前版本和已有任务。通知服务不替 coordinator 做规划、分派或验收。
+完成通知到达后，coordinator 用 `executor_status` / `executor_result` 对照实际改动、相关测试和任务目标审阅结果，需要修正时用 `executor_continue` 继续原会话，核验后才调用 `task_finish`。运行时会自动记录改动与检查结果，不要求 executor 另做产物清单、文件哈希或固定字段的验收表。Issue 评论简要交代完成内容、检查结果和重要限制；有可访问的报告链接时附上，报告按需要补充细节。
+
+看板变化通知到达时，先重新调用 `tasks_list` 对照当前版本和已有任务。通知服务不替 coordinator 做规划、分派或验收。
 
 用前面的 bootstrap `status` 命令检查本地服务。服务健康、通知已排队、coordinator 一轮已开始或已结束、任务已验收应分别核对。`queued` 只表示收到排队回执；`delivered` 表示原线程里已找到这条输入，还要看 `turn_status` 是处理中、完成、失败还是中断。结果不明确的提交保留待核对，不盲目重发，也不另建 coordinator。
 

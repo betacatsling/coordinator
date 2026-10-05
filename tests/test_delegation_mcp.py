@@ -3,6 +3,7 @@ import io
 import fcntl
 import json
 import os
+import select
 from pathlib import Path
 import subprocess
 import sys
@@ -18,6 +19,7 @@ from delegation_service import DelegationService
 from delegation_mcp import dispatch, serve, RequestService
 from issue_worktree import git, create
 from mcp_executor import _verify, validated_receipt, task_identity
+from platform_support import process_alive
 
 BRIDGE = r'''
 import json, os, re, sys, uuid
@@ -78,10 +80,39 @@ class DelegationTests(unittest.TestCase):
         self.jobs = []
 
     def tearDown(self):
-        # Real workers used below complete before temporary fixture disposal.
-        self.service.close()
-        self.env.stop()
+        try:
+            # A terminal job can still have a detached worker persisting its
+            # notification outcome. close() intentionally does not join it.
+            if self.service.path.exists():
+                state = json.loads(self.service.path.read_text())
+                for job in state['jobs'].values():
+                    self.wait_worker_exit(job)
+        finally:
+            self.service.close()
+            self.env.stop()
         self.tmp.cleanup()
+
+    def wait_worker_exit(self, job, timeout=20):
+        pid = job.get('worker_pid')
+        if not pid or pid == os.getpid():
+            return  # Preparation failures and the synthetic launch-window test.
+        message = 'Fixture worker did not exit: ' + str(job)
+        if hasattr(os, 'pidfd_open'):
+            # pidfds observe actual exit, including unreaped orphan workers from
+            # the stdio test, without confusing zombies with live processes.
+            try:
+                descriptor = os.pidfd_open(pid)
+            except ProcessLookupError:
+                return
+            try:
+                self.assertTrue(select.select([descriptor], [], [], timeout)[0], message)
+            finally:
+                os.close(descriptor)
+        else:
+            until = time.monotonic() + timeout
+            while process_alive(pid):
+                self.assertLess(time.monotonic(), until, message)
+                time.sleep(.01)
 
     def start(self, i=0, **kwargs):
         task = next(t for t in self.service.tasks_list()['tasks'] if t['issue_id'] == 'I'+str(i))
@@ -94,9 +125,39 @@ class DelegationTests(unittest.TestCase):
         while time.monotonic()<until:
             status = self.service.executor_status(job['id'])
             if status['status'] != 'running':
+                self.wait_worker_exit(status, timeout=max(0, until - time.monotonic()))
                 return status
             time.sleep(.04)
         self.fail('Fixture worker did not finish: '+str(status))
+
+    @unittest.skipUnless(hasattr(os, 'pidfd_open'), 'Requires process-exit descriptors')
+    def test_terminal_status_waits_for_remaining_worker_writes(self):
+        marker = self.base / 'notification-written'
+        script = ('import sys; from pathlib import Path; sys.stdin.read(1); '
+                  'Path(sys.argv[1]).write_text("notification persisted")')
+        worker = subprocess.Popen([sys.executable, '-c', script, str(marker)],
+                                  stdin=subprocess.PIPE)
+        status = dict(id='delayed-notification', status='verified', worker_pid=worker.pid)
+        observe_exit = select.select
+
+        def release_and_observe(*args):
+            # Release the final write only when the fixture actually waits for
+            # process exit. Returning at terminal status would miss this write.
+            self.assertFalse(marker.exists())
+            worker.stdin.write(b'x')
+            worker.stdin.flush()
+            return observe_exit(*args)
+
+        try:
+            with patch.object(self.service, 'executor_status', return_value=status), \
+                    patch.object(select, 'select', side_effect=release_and_observe) as observe:
+                self.assertEqual(self.wait(status), status)
+                observe.assert_called_once()
+            self.assertEqual(marker.read_text(), 'notification persisted')
+            self.assertEqual(worker.poll(), 0)
+        finally:
+            worker.stdin.close()
+            worker.wait(timeout=20)
 
     def test_real_async_start_resume_original_finish_and_restart(self):
         job = self.start()
@@ -104,7 +165,10 @@ class DelegationTests(unittest.TestCase):
         first = self.wait(job)
         self.assertEqual(first['status'], 'verified', first)
         receipt = self.service.executor_result(job['id'])['receipt']
-        self.assertIn('p0.txt', receipt['artifacts'])
+        self.assertIn('p0.txt', receipt['changed_paths'])
+        self.assertIn('+implementation', receipt['patch'])
+        self.assertNotIn('artifacts', receipt)
+        self.assertNotIn('sha256', json.dumps(receipt))
         self.assertNotEqual(receipt['thread_id'], self.owner)
         self.service = DelegationService(self.config_path)
         resumed = self.service.executor_continue(job['id'], 'Refine original artifact')
@@ -163,12 +227,12 @@ class DelegationTests(unittest.TestCase):
         self.config['repository']='u/other';self.config_path.write_text(json.dumps(self.config))
         with self.assertRaisesRegex(ValueError,'Configuration changed'):self.service.tasks_list()
 
-    def test_changed_artifact_prevents_acceptance_and_rejection_can_continue(self):
+    def test_changed_git_diff_prevents_acceptance_and_rejection_can_continue(self):
         job = self.start(); self.wait(job)
         receipt = self.service.executor_result(job['id'])['receipt']
         artifact = Path(receipt['workspace'])/'p0.txt'
         artifact.write_text('tampered')
-        with self.assertRaisesRegex(ValueError,'artifacts changed'):
+        with self.assertRaisesRegex(ValueError,'Git changes differ'):
             self.service.task_finish(job['id'],True,'Accept','Evidence')
         self.assertEqual(self.service.task_finish(job['id'],False,'Needs revision','Tampered evidence')['status'],'rejected')
         self.service.executor_continue(job['id'],'Fix actual artifact')
@@ -180,7 +244,17 @@ class DelegationTests(unittest.TestCase):
         self.service.task_finish(job['id'],True,'Accepted','Evidence')
         dependent=self.start(1,depends_on=[job['id']]);self.wait(dependent)
         with self.service.transaction() as state:
-            self.assertEqual(state['jobs'][dependent['id']]['dependencies'][0]['job_id'],job['id'])
+            evidence = state['jobs'][dependent['id']]['dependencies'][0]
+            self.assertEqual(evidence['job_id'],job['id'])
+            self.assertEqual(evidence['attempt_id'], state['jobs'][job['id']]['attempt_id'])
+            self.assertIn('+implementation', evidence['patch'])
+            self.assertNotIn('artifacts', evidence)
+            self.assertNotIn('sha256', json.dumps(evidence))
+            self.service._check_dependencies(state, state['jobs'][dependent['id']])
+            evidence['attempt_id'] = 'different-attempt'
+            with self.assertRaisesRegex(ValueError, 'Pinned dependency attempt changed'):
+                self.service._check_dependencies(state, state['jobs'][dependent['id']])
+            evidence['attempt_id'] = state['jobs'][job['id']]['attempt_id']
         self.project['items']['nodes'][0]['content']['body']='changed authorized instruction'
         self.source.write_text(json.dumps(self.project))
         with self.assertRaisesRegex(ValueError,'Dependency source revision changed'):self.start(2,depends_on=[job['id']])
@@ -221,21 +295,101 @@ class DelegationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'closed'):
             self.service.tasks_list()
 
-    def test_manifest_detects_added_files_and_supports_deletion_only(self):
-        task={'issue_id':'manifest','revision_hash':'revision','dispatch_key':'dispatch'}
+    def test_git_diff_detects_added_files_and_supports_deletion_only(self):
+        task={'issue_id':'git-diff','revision_hash':'revision','dispatch_key':'dispatch'}
         workspace,head=create(self.workspace,task,self.service.root,['README','owned'])
         config=dict(self.config['executor'],cwd=str(workspace),base_head=head,owned_paths=['README','owned'],task_identity=task_identity(task))
         (workspace/'README').unlink()
         receipt=dict(status='completed',workspace=str(workspace),base_head=head,owned_paths=['README','owned'],bridge_state_root=self.config['executor']['bridge_state_root'],task_identity=task_identity(task))
-        path=self.base/'manifest.json'
+        path=self.base/'git-diff.json'
         def save():path.write_text(json.dumps(receipt))
         _verify(config,workspace,config['owned_paths'],receipt,save)
-        self.assertEqual(validated_receipt(config,path)['artifacts'],{})
+        checked = validated_receipt(config,path)
+        self.assertEqual(checked['changed_paths'], ['README'])
+        self.assertIn('deleted file mode', checked['patch'])
+        self.assertNotIn('artifacts', checked)
         (workspace/'README').write_text('restored')
         with self.assertRaises(ValueError):validated_receipt(config,path)
         (workspace/'README').unlink()
         (workspace/'owned').mkdir();(workspace/'owned/new.txt').write_text('added after verification')
         with self.assertRaises(ValueError):validated_receipt(config,path)
+
+    def test_git_patch_includes_tracked_new_empty_and_binary_files(self):
+        task = dict(issue_id='git-diff', revision_hash='revision', dispatch_key='dispatch')
+        workspace, head = create(self.workspace, task, self.service.root, ['README', 'owned'])
+        config = dict(self.config['executor'], cwd=str(workspace), base_head=head,
+                      owned_paths=['README', 'owned'], task_identity=task_identity(task),
+                      checks=[[sys.executable, '-c', 'print("behavioral fixture passed")']])
+        (workspace / 'README').write_text('changed tracked file\n')
+        (workspace / 'owned').mkdir()
+        (workspace / 'owned/new.txt').write_text('new file\n')
+        (workspace / 'owned/empty.txt').write_text('')
+        (workspace / 'owned/binary.dat').write_bytes(b'\x00\xff\x01')
+        receipt = dict(status='completed', workspace=str(workspace), base_head=head,
+                       owned_paths=config['owned_paths'], bridge_state_root=config['bridge_state_root'],
+                       task_identity=config['task_identity'])
+        path = self.base / 'git-diff.json'
+        def save():
+            path.write_text(json.dumps(receipt))
+        _verify(config, workspace, config['owned_paths'], receipt, save)
+        checked = validated_receipt(config, path)
+        self.assertEqual(checked['changed_paths'], ['README', 'owned/binary.dat', 'owned/empty.txt', 'owned/new.txt'])
+        self.assertNotIn('artifacts', checked)
+        self.assertNotIn('sha256', json.dumps(checked))
+        self.assertIn('GIT binary patch', checked['patch'])
+        self.assertIn('+new file', checked['patch'])
+        self.assertEqual(checked['checks'][-1]['stdout'], 'behavioral fixture passed\n')
+        self.assertEqual(git(workspace, 'diff', '--cached', '--name-only'), '')
+        for name in checked['changed_paths']:
+            target = workspace / name
+            original = target.read_bytes()
+            target.write_bytes(original + b'changed')
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'Git changes differ'):
+                validated_receipt(config, path)
+            target.write_bytes(original)
+        self.assertEqual(validated_receipt(config, path)['patch'], checked['patch'])
+
+    def test_acceptance_rejects_failed_recorded_checks_without_a_hash_inventory(self):
+        job = self.start(); self.wait(job)
+        receipt = self.service.executor_result(job['id'])['receipt']
+        self.assertNotIn('artifacts', receipt)
+        receipt['checks'][0]['returncode'] = 1
+        Path(job['receipt']).write_text(json.dumps(receipt))
+        with self.assertRaisesRegex(ValueError, 'successful recorded checks'):
+            self.service.task_finish(job['id'], True, 'Accept')
+
+    def test_check_mutations_require_fresh_verification(self):
+        task = dict(issue_id='checks', revision_hash='revision', dispatch_key='dispatch')
+        workspace, head = create(self.workspace, task, self.service.root, ['README'])
+        (workspace / 'README').write_text('implementation\n')
+        config = dict(self.config['executor'], cwd=str(workspace), base_head=head,
+                      owned_paths=['README'], task_identity=task_identity(task),
+                      checks=[[sys.executable, '-c', 'from pathlib import Path; Path("README").write_text("changed by check")']])
+        receipt = {}
+        with self.assertRaisesRegex(ValueError, 'while checks ran'):
+            _verify(config, workspace, config['owned_paths'], receipt, lambda: None)
+        self.assertEqual(receipt['checks'][-1]['returncode'], 0)
+        self.assertNotEqual(receipt.get('status'), 'verified')
+
+    def test_task_finish_accepts_one_concise_summary_without_report(self):
+        job = self.start(); self.wait(job)
+        summary = 'Created the fixture output; scoped change checks passed.'
+        response = dispatch(RequestService(self.config_path), {'method': 'tools/call', 'params': {
+            '_meta': {'threadId': self.owner}, 'name': 'task_finish',
+            'arguments': {'job_id': job['id'], 'accepted': True, 'summary': summary}}})
+        self.assertNotIn('isError', response, response)
+        result = response['structuredContent']
+        self.assertEqual(result['status'], 'accepted')
+        self.assertEqual(result['decision']['report'], summary)
+        self.assertEqual(result['integration'], 'isolated_unmerged')
+        self.assertIn(summary, Path(result['report']['local_path']).read_text())
+        self.assertEqual(self.service.task_finish(job['id'], True, summary)['status'], 'accepted')
+
+    def test_task_finish_summary_required_and_supplied_report_must_be_text(self):
+        for accepted, summary, report in [('yes', 'Outcome', None), (True, '', None),
+                                         (True, 'Outcome', ''), (True, 'Outcome', [])]:
+            with self.subTest(accepted=accepted, summary=summary, report=report), self.assertRaises(ValueError):
+                self.service.task_finish('unused', accepted, summary, report)
 
     def test_stdio_dispatch_worker_survives_connection_exit(self):
         task=self.service.tasks_list()['tasks'][0]

@@ -31,7 +31,9 @@ Windows uses the configured `codex.exe` and official `app-server proxy` to reach
 
 Up to three independent jobs can run concurrently. Dependencies use accepted job IDs and pinned receipts, without automatic patch integration. Owned paths, resources, source revisions and durable receipts guard dispatch and recovery. When all useful independent work is dispatched, yield instead of repeatedly polling or sleeping inside a tool call.
 
-An executor finishing its turn makes its result available for review. Acceptance records reviewed implementation evidence; isolated worktrees still need separately authorized integration. Nothing automatically merges, pushes, deploys or closes Issues.
+An executor finishing its turn makes its result available for review. The coordinator checks the actual changes, relevant tests and task goal. The runtime collects the changes and check results; executors do not need a separate artifact manifest, file hashes or a fixed report checklist. Isolated changes still need authorized integration; nothing automatically merges, pushes, deploys or closes Issues.
+
+Issue updates briefly say what was done, what the checks showed and any meaningful limitation, with a report link when available. Supporting details belong in the report, without a required set of fields.
 
 Private HTML reports can be read in the dashboard's isolated static preview or downloaded, with verified GitHub links for context. JavaScript and external resources are disabled in previews. Reports have no public hosted URL.
 

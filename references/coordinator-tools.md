@@ -2,17 +2,13 @@
 
 Use this reference when the chosen native Codex session directly manages independent executor sessions through MCP. Read the server's exposed schemas before calling tools; the installed version is authoritative.
 
-## Responsibility and evidence
+## Responsibility and review
 
-The coordinator reads the project, chooses tasks and parallelism, dispatches executors, handles follow-ups, inspects artifacts and decides acceptance. The MCP server supplies durable execution records and deterministic checks. The local dashboard service also watches board changes and reconciles completion notices; it does not run a second planning or acceptance loop.
+The coordinator reads the project, chooses tasks and parallelism, dispatches executors, handles follow-ups and decides whether the result meets the request. Review the actual changes and relevant tests against the task goal. The runtime records the Git diff, changed paths and check outcomes automatically; executors do not need to write a separate artifact manifest, compute file hashes or fill a fixed-field checklist.
 
-Keep three distinct states in reports:
+An executor finishing its turn means the result is ready for review. Accepting isolated work does not merge it or make a requested deployment available. State that remaining work when it affects delivery; it is not a required disclaimer for every update. Do not infer behavioral correctness from static checks or a successful process exit.
 
-- **Executor turn complete:** output is ready for inspection
-- **Implementation accepted:** the coordinator verified the isolated artifacts and checks
-- **Project task complete:** the requested deliverable, including any required integration or deployment, is actually available
-
-Acceptance of a detached worktree does not merge it. Preserve the remaining integration work in the result and board status. Do not infer behavioral correctness from static checks or a successful process exit.
+The local dashboard service watches board changes and reconciles completion notices. It does not plan, dispatch or accept work.
 
 ## Tool workflow
 
@@ -32,17 +28,19 @@ Record the returned job, thread and workspace identities. Observe the result if 
 
 ### `executor_status(job_id)` and `executor_result(job_id)`
 
-Use status for lifecycle/progress and result for the durable receipt, actual artifacts and recorded checks. Inspect the reported paths and output as needed. Recover an uncertain process outcome before deciding whether another turn is needed.
+Use status for lifecycle/progress and result for the saved execution record, Git changes and recorded check commands, exit codes and output. Read the changed code and run any further relevant checks needed to judge the goal. No manually prepared file inventory or checksum report is needed. Recover an uncertain process outcome before deciding whether another turn is needed.
 
 ### `executor_continue(job_id, assignment, recover_only)`
 
 Continue the original task's native session and workspace with a concrete correction or follow-up before final acceptance. Rejected results may be corrected this way; accepted jobs are closed. With `recover_only: true`, observe the existing bridge job without submitting a new turn. If original-session recovery is unavailable, report the specific blocker and retain the receipt; do not replace it with a new session as a recovery shortcut. A `preparation_failed` reservation releases its slot and leases. Before any executor was launched, this tool can retry that original reservation using its durable claiming/preparing phase and idempotent claim. A missing receipt after launch remains a manual-recovery blocker.
 
-### `task_finish(job_id, accepted, summary, report)`
+### `task_finish(job_id, accepted, summary, report?)`
 
-Record the coordinator's decision after inspecting evidence. Use `accepted: true` only for artifacts the helper has verified against the current task and the coordinator has judged sufficient. Describe failed checks or required corrections when rejecting a result. Keep implementation acceptance and integration status explicit in `summary` and `report`.
+Record the coordinator's decision after reviewing the work. Use `accepted: true` only when the current result and relevant checks support the task goal. The runtime checks the task/attempt identity, owned paths and that the reviewed Git changes are still current. These guards do not substitute for the coordinator's judgment. When rejecting, explain the correction needed.
 
-The tool returns `integration: isolated_unmerged`, renders an escaped private local HTML report with `url: null`, and performs configured write-back. The local dashboard can preview or download that exact ledger-bound report. It provides no public hosting, merge, push or deployment.
+`summary` is a short, plain-language Issue update: what was done, what the checks showed and any meaningful limitation. `report` is optional free-form supporting detail; omit it when the summary is enough. The generated report then uses the summary. Neither requires a fixed set of fields, a file inventory, hashes or repeated runtime metadata. Mention unmerged changes when that affects the requested delivery; do not imply integration happened. Keep debug identifiers and local paths out of the result comment.
+
+The tool records integration status, renders a private local HTML report and performs configured write-back. The local dashboard can preview or download the report. A usable hosted report link may be included in the Issue comment when available; the default local report has `url: null`, so do not promise a public link or add a missing-link notice. The tool does not merge, push or deploy.
 
 If the source has changed, acceptance refuses the stale result. Explicitly rejecting an inactive stale job retires it locally as `superseded`, releases its leases and returns `source_changed: true` with `writeback: null`; it does not publish stale results. Rejection of an unchanged task remains retryable in the original session.
 

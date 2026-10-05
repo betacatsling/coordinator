@@ -3,6 +3,7 @@
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import hashlib
 import json
+import os
 from state_io import atomic_write
 import subprocess
 from platform_support import IS_WINDOWS
@@ -91,3 +92,16 @@ def inspect(workspace, paths):
     if git(workspace,'diff','--cached','--name-only'):raise ValueError('Executor staged changes; do not alter shared Git state')
     git(workspace,'diff','--check')
     return sorted(set(names))
+
+
+def diff(workspace):
+    """Ordinary Git patch evidence, including new files without staging them."""
+    options = ['--binary', '--no-ext-diff', '--no-textconv', '--no-color']
+    patches = [git(workspace, 'diff', *options, 'HEAD')]
+    for name in git(workspace, 'ls-files', '--others').splitlines():
+        result = subprocess.run(['git', 'diff', '--no-index', *options, '--', os.devnull, name],
+                                cwd=workspace, capture_output=True, text=True, encoding='utf-8', timeout=30)
+        if result.returncode not in {0, 1}:
+            raise RuntimeError('Git new-file diff failed: ' + result.stderr.strip())
+        patches.append(result.stdout.strip())
+    return '\n'.join(patch for patch in patches if patch)

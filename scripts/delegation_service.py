@@ -195,7 +195,9 @@ class DelegationService:
                 if not any(t['issue_id'] == dependency['task']['issue_id'] and t['revision_hash'] == dependency['task']['revision_hash'] for t in all_tasks):
                     raise ValueError('Dependency source revision changed')
                 evidence = validated_receipt(dependency['executor_config'], dependency['receipt'])
-                job['dependencies'].append(dict(job_id=dependency_id, task=dependency['task'], artifacts=evidence['artifacts'], checks=evidence.get('checks', []), changed_paths=evidence.get('changed_paths', []), patch=evidence.get('patch', '')))
+                job['dependencies'].append(dict(job_id=dependency_id, task=dependency['task'],
+                    attempt_id=evidence['attempt_id'], workspace=evidence['workspace'], base_head=evidence['base_head'],
+                    checks=evidence.get('checks', []), changed_paths=evidence.get('changed_paths', []), patch=evidence.get('patch', '')))
             state['jobs'][job_id] = job
             # Reserve durably before any external mutation; uncertain outcomes never auto-restart.
             atomic_write(self.path, json.dumps(state, ensure_ascii=False, indent=2))
@@ -269,8 +271,8 @@ class DelegationService:
             if not any(t['issue_id'] == pinned['task']['issue_id'] and t['revision_hash'] == pinned['task']['revision_hash'] for t in current):
                 raise ValueError('Pinned dependency source revision changed')
             evidence = validated_receipt(dependency['executor_config'], dependency['receipt'])
-            if evidence['artifacts'] != pinned['artifacts']:
-                raise ValueError('Pinned dependency artifacts changed')
+            if evidence['attempt_id'] != pinned['attempt_id']:
+                raise ValueError('Pinned dependency attempt changed')
 
     def executor_continue(self, job_id, assignment, recover_only=False):
         if not isinstance(assignment, str) or not isinstance(recover_only, bool) or (not recover_only and not assignment.strip()):
@@ -327,14 +329,19 @@ class DelegationService:
 
     def _report(self, job, summary, report):
         path = self.root / (job['id'] + '.html')
-        content = '<!doctype html><meta charset="utf-8"><title>Coordinator acceptance</title><h1>Coordinator acceptance</h1><p>' + html.escape(summary) + '</p><pre>' + html.escape(report) + '</pre><p>Isolated worktree; not merged or deployed.</p>'
+        details = '<pre>' + html.escape(report) + '</pre>' if report != summary else ''
+        content = '<!doctype html><meta charset="utf-8"><title>Coordinator acceptance</title><h1>Coordinator acceptance</h1><p>' + html.escape(summary) + '</p>' + details + '<p>Isolated worktree; not merged or deployed.</p>'
         atomic_write(path, content)
         os.chmod(path, 0o600)
         return {'local_path': str(path), 'url': None, 'access_verified': False}
 
-    def task_finish(self, job_id, accepted, summary, report):
-        if not isinstance(accepted, bool) or not isinstance(summary, str) or not summary.strip() or not isinstance(report, str) or not report.strip():
-            raise ValueError('Explicit acceptance, summary and evidence report required')
+    def task_finish(self, job_id, accepted, summary, report=None):
+        if not isinstance(accepted, bool) or not isinstance(summary, str) or not summary.strip():
+            raise ValueError('Explicit acceptance and a nonempty summary required')
+        if report is None:
+            report = summary
+        if not isinstance(report, str) or not report.strip():
+            raise ValueError('Report must be nonempty text when supplied')
         with self.transaction() as state:
             job = self._job(state, job_id)
             decision = dict(accepted=accepted, summary=summary, report=report)

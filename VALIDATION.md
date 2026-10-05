@@ -1,12 +1,18 @@
 # Validation — fresh-only candidate
 
-Validated in the cloud on 2026-10-05. The workflow uses one chosen native coordinator, one local dashboard-and-notification service and direct delegation MCP tools.
+Validated in the cloud on 2026-10-05. This acceptance-simplified candidate is not deployed. The workflow uses one chosen native coordinator, one local dashboard-and-notification service and direct delegation MCP tools.
 
 ## Tested
 
-The final integrated suite ran **221 tests: 220 passed, one skipped**. The skipped exited-process probe requires a native Windows kernel. Script, test and web-file checksums were unchanged across the run. Python compilation, `scan_release.py` and `git diff --check` also passed.
+The final integrated suite ran **227 tests: 226 passed, one skipped**. The skipped exited-process probe requires a native Windows kernel. Python compilation, `scan_release.py` and `git diff --check` also passed.
 
-Coverage includes native-session binding, board filtering and title-only inputs, six MCP tool contracts, detached workers, concurrency and ownership, original-session recovery, stale-result retirement, artifact/check verification, GitHub write-back fixtures, private HTML reports, isolated preview/download restrictions and dashboard startup/navigation contracts.
+Coverage includes native-session binding, board filtering and title-only inputs, six MCP tool contracts, detached workers, concurrency and ownership, original-session recovery, stale-result retirement, Git-change/check verification, GitHub write-back fixtures, private HTML reports, isolated preview/download restrictions and dashboard startup/navigation contracts.
+
+Acceptance regression tests cover scoped tracked/new/empty/binary Git changes, changes made after review or during checks, failed recorded checks, accepted dependencies and a concise summary with no separate report argument. Execution records no longer contain a per-file artifact/hash inventory. Ownership, task/attempt identity, path-scope and stale-result protections remain covered.
+
+The final suite includes the CI fixture teardown-race fix: tests wait for detached workers to finish persisting notification outcomes before deleting temporary state. This is test-lifecycle hardening, not evidence of live notification delivery.
+
+Before acceptance simplification, the integrated baseline was 221 tests: 220 passed and one skipped.
 
 Twelve cross-component cases exercise real durable files and locks, bootstrap binding, the watcher loop, worker outcome/notice transactions and dashboard reads. They cover silent baseline → changed board input → queue → worker completion → review by the same coordinator; repeated init/stop/restart; both-outbox deduplication; outages; lost acknowledgements; queue rejection; crash recovery; failed review; binding/configuration drift; and redacted status. Native queue, GitHub, process startup and worktree boundaries in these cases are fixtures. They do not establish live wakeup or execution.
 
@@ -14,7 +20,7 @@ Before this integration, the recorded baseline was 170 tests: 169 passed and one
 
 Before notification integration, a separate Linux fixture smoke verified a real detached dashboard process, HTTP page serving, automatic fallback from an occupied preferred port, headless reuse and `--no-open` server startup. Browser-open deduplication and macOS/Windows desktop detection were tested with mocks; this is not native browser or native macOS/Windows validation.
 
-Cloud-side browser validation was blocked. The implementation task subsequently reported Mac-rendered screenshots, but browser exit timed out; complete browser interaction validation is not claimed. Native Windows end-to-end operation remains unverified.
+Browser-based validation remains blocked in this environment; backend and DOM-contract tests are not a successful live-browser run. No native macOS or Windows end-to-end validation is claimed.
 
 Run: `python3 -m unittest discover -s tests -v`
 
@@ -34,11 +40,15 @@ The harness uses temporary fixture state, a credential-free isolated `CODEX_HOME
 
 ## Not yet verified live
 
-The implementation task reported installing this candidate on macOS and Linux and verifying synthetic-board notifications waking the same real idle native thread on both hosts, plus Linux HTTP lifecycle and isolated HTML preview. These checks establish the observed notification/lifecycle paths; complete model-driven execution and live GitHub write-back still require separate evidence. The installed-host smoke test verifies MCP identity routing only, not model-driven coordinator or executor behavior. Reports are local files; hosted report links are not implemented in the new service. Accepted worktrees remain unmerged.
+This acceptance-simplified candidate has not been installed or activated on a user host. Live GitHub mutation, native desktop notification delivery and complete model-driven execution still require a controlled end-to-end run. The installed-host smoke test verifies MCP identity routing only, not model-driven coordinator or executor behavior. Reports are local files; hosted report links are not implemented in the new service. Accepted worktrees remain unmerged.
 
 Fresh initialization uses `.project-delegation/runtime`. Existing repository files, running agents and unrelated state are not deleted or terminated. Stop competing automation explicitly before activating the local service.
 
-Public release verification on macOS ran 221 tests in 16.806 seconds: 220 passed and one native-Windows-kernel case was skipped. Web JavaScript syntax, release hygiene and whitespace checks passed. Only the public source checkout changed.
+Public macOS release verification ran 227 tests in 19.772 seconds: 225 passed and two platform-specific cases were skipped (native Windows kernel and Linux process-exit descriptors). The implementation task reported Linux 226 passed and one Windows skip, plus ten repeated teardown-regression runs totaling 250 passing test executions. Release hygiene, JavaScript syntax and whitespace checks passed. No personal installation or live project state changed during publication.
+
+## Previous unified-service release observations
+
+These are earlier verification records and do not claim deployment or live validation of the acceptance-simplified code. The previous Mac release suite passed 220 of 221 tests with one skip; its Linux CI failed during temporary-fixture cleanup, which this revision addresses.
 
 ## Additional host observations
 

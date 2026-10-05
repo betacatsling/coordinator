@@ -20,11 +20,11 @@ TOOLS = [
     {'name': 'executor_start', 'description': 'Claim current task and start one independent persistent executor in an isolated worktree. Returns immediately; at most three active jobs. Never merges or deploys.',
      'inputSchema': schema({'issue_id': STRING, 'revision_hash': STRING, 'assignment': STRING, 'owned_paths': STRINGS, 'depends_on': STRINGS, 'resources': STRINGS}, ('issue_id', 'revision_hash', 'assignment', 'owned_paths'))},
     {'name': 'executor_status', 'description': 'Read persisted job/session status; never starts or replaces a session.', 'inputSchema': schema({'job_id': STRING}, ('job_id',))},
-    {'name': 'executor_result', 'description': 'Read original executor receipt, changed artifacts and controller-run checks for independent review.', 'inputSchema': schema({'job_id': STRING}, ('job_id',))},
+    {'name': 'executor_result', 'description': 'Read original executor receipt, scoped Git changes and controller-run checks for independent review.', 'inputSchema': schema({'job_id': STRING}, ('job_id',))},
     {'name': 'executor_continue', 'description': 'Continue the original completed executor thread. recover_only observes an interrupted original job without submitting a turn; never creates a replacement.',
      'inputSchema': schema({'job_id': STRING, 'assignment': {'type': 'string'}, 'recover_only': {'type': 'boolean'}}, ('job_id', 'assignment'))},
-    {'name': 'task_finish', 'description': 'Record coordinator acceptance/rejection, render a private HTML evidence report and perform configured issue/board writeback. Acceptance is isolated-worktree verification, not integration.',
-     'inputSchema': schema({'job_id': STRING, 'accepted': {'type': 'boolean'}, 'summary': STRING, 'report': STRING}, ('job_id', 'accepted', 'summary', 'report'))},
+    {'name': 'task_finish', 'description': 'Record coordinator acceptance/rejection and a concise outcome summary; optional report adds review details. Save a private HTML report and perform configured issue/board writeback. Acceptance does not merge or deploy.',
+     'inputSchema': schema({'job_id': STRING, 'accepted': {'type': 'boolean'}, 'summary': STRING, 'report': STRING}, ('job_id', 'accepted', 'summary'))},
 ]
 
 

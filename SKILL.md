@@ -18,19 +18,23 @@ Verify the six delegation MCP tools are exposed in this session and call `tasks_
 ## Dispatch, yield, review
 
 1. Read current tasks, Issue text, authorized comments, code and linked artifacts. Reconcile durable jobs before dispatching more work
-2. Decide the split here. Give each executor a bounded outcome, owned paths, dependencies, resources and acceptance checks. Run independent tasks in parallel within capacity; avoid overlapping edits and preserve dirty project files
+2. Decide the split here. Give each executor a bounded outcome, owned paths, dependencies, resources and relevant checks. Run independent tasks in parallel within capacity; avoid overlapping edits and preserve dirty project files
 3. Call `executor_start`. Each task gets an independent persistent Codex session and isolated worktree. Distinguish reserved, waiting and running work using the returned evidence
 4. When useful independent work is dispatched, report the pending work briefly and **end this coordinator turn**. Do not keep the turn busy by sleeping in tools or repeatedly polling. Completion notices and board changes target this same session; they do not create another coordinator
-5. On a completion notice, read `executor_status` and `executor_result`. Inspect changes and observed checks against the current requirements. Use `executor_continue` for corrections in the original session, then yield again. Use `task_finish` only after review
+5. On a completion notice, read `executor_status` and `executor_result`. Review the actual changes and relevant test results against the task goal. Use `executor_continue` for corrections in the original session, then yield again. Use `task_finish` only after review
 6. On a board-change notice, call `tasks_list` and reconcile the current revision and existing jobs before deciding what to dispatch. A notice is not authorization to replay old work
-7. Report verified outcomes, artifacts and remaining decisions. Notification health, queue acknowledgement and a started or completed coordinator turn do not prove implementation acceptance
+7. Report what changed, the result of relevant checks and any remaining decision or blocker. Keep routine updates brief; notification delivery and a completed executor turn do not establish that the task goal was met
 
-Keep responsibility through corrections and acceptance. An executor ending a turn is only ready for review. Accepted isolated changes still require separately authorized integration; do not automatically merge, push, deploy or close Issues. If original-session recovery is unavailable, preserve receipts and report the blocker.
+Keep responsibility through corrections and acceptance. The runtime collects the Git changes and check results; do not ask executors to prepare a separate artifact manifest, file hashes or a fixed-field evidence checklist. A successful check does not replace reviewing whether the work meets the request.
+
+An executor ending a turn is only ready for review. Accepted isolated changes still require authorized integration; do not automatically merge, push, deploy or close Issues. Mention remaining integration when it affects delivery, rather than repeating unrelated status boilerplate in every update. If original-session recovery is unavailable, preserve the execution record and report the blocker.
 
 ## Notifications and reports
 
 The local service only observes board changes and delivers/reconciles notices; it never plans, dispatches or accepts work. Executor outcomes are saved with durable completion notices before delivery is attempted. An uncertain submission is retained for reconciliation rather than blindly resent. Delivery depends on the bound native session and host; a healthy service or queued notice is not proof that the session has started processing it. `delivered` confirms the exact input appeared in the original thread; its `turn_status` is separate from executor outcome and task acceptance.
 
-HTML reports remain private local artifacts, readable through the dashboard's isolated static preview or original download. Scripts and external resources are disabled in the preview. GitHub links provide verified source context, not public report hosting. Publish only authorized configured write-back.
+Use a short, natural-language Issue summary: what was done, what the checks showed and any meaningful limitation. Include a usable report link when one exists; keep local paths, debug fields and missing-link notices out of the result comment. The HTML report can hold useful supporting detail without a required section list or copied runtime fields. Publish only authorized configured write-back.
+
+HTML reports remain private local files, readable through the dashboard's isolated static preview or original download. Scripts and external resources are disabled in the preview. GitHub links provide verified source context, not public report hosting.
 
 This is an experimental fresh runtime. Offline tests do not establish live notification wakeup, browser behavior or GitHub execution. See [validation evidence](VALIDATION.md).

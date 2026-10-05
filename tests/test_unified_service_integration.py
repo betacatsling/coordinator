@@ -237,7 +237,7 @@ class UnifiedServiceIntegrationTests(unittest.TestCase):
                           base_head=config['base_head'], owned_paths=config['owned_paths'],
                           bridge_state_root=config.get('bridge_state_root'),
                           thread_id=str(uuid.UUID(int=2)), job_id='native-job',
-                          checks=[{'returncode': 0}], artifacts=[])
+                          checks=[{'returncode': 0}], changed_paths=['result.txt'], patch='fixture diff')
             Path(receipt_path).write_text(json.dumps(result), encoding='utf-8')
             return result
 
