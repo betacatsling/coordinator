@@ -1,63 +1,43 @@
 # project-delegation
 
-Make your chosen Codex project session the coordinator. It reads the project, dispatches independent persistent Codex executors through MCP, follows their progress and accepts verified results. [中文](README.zh-CN.md)
+Make your chosen native Codex session the project coordinator. It reads the board and repository, dispatches independent persistent executors through MCP, requests corrections and accepts verified outcomes. [中文](README.zh-CN.md)
 
 ## Start
 
-Tell the session you want to use:
+Tell your chosen session: **Be this project's coordinator** or **你作为这个项目的 coordinator**.
 
-> Be this project's coordinator
+With a reviewed project configuration, it verifies the actual runtime `CODEX_THREAD_ID` against the native AppServer thread identity and workspace, then initializes a fresh binding. The coordinator makes planning, dispatch and acceptance decisions directly through tools. An optional board watcher only notifies it about changed inputs.
 
-Or: **你作为这个项目的 coordinator**
+This is experimental, fresh-only code. There is no state conversion, ownership transfer or compatibility mode. It uses `.project-delegation/runtime` and preserves existing files elsewhere. Nothing automatically installs tools, starts or terminates processes, or changes a live project configuration.
 
-The coordinator resolves the current repository, configured GitHub Project and real session identity. It stays the project's manager: it can inspect code and tools, decide what can run in parallel, request corrections and report results. The watcher only notifies this session about changed tasks; it does not make plans or dispatch work from JSON in the conversation.
+## Setup
 
-The new coordinator-driven mode is implemented and tested offline. Live Codex MCP loading, native notification delivery and end-to-end GitHub execution in this mode are not yet validated. Installation does not register MCP tools, restart a session, start a watcher or change an existing production binding. See [setup and tool contracts](references/coordinator-tools.md).
+Use macOS or Linux, Python 3.9+, Node.js, authenticated Codex and GitHub CLIs, and separately installed [mcp-agents](https://github.com/thomaswitt/mcp-agents). The chosen coordinator must be loaded in a supported shared native Codex AppServer.
 
-## Workflow
+1. Review [the example configuration](assets/fresh-config.example.json), fill in the selected repository, Project, authorized user and exact board mappings, and review executor and write-back permissions
+2. From the selected workspace, run `python3 /absolute/skill/scripts/coordinator_bootstrap.py --config /absolute/config.json init`
+3. Explicitly register `python3 /absolute/skill/scripts/delegation_mcp.py --config /absolute/config.json` using your Codex client's supported MCP setup. Preserve the authentic runtime context; never copy a thread ID into global server configuration
+4. Verify discovery of the six coordinator tools in the chosen session and a successful read-only `tasks_list` call
+5. Optionally initialize the watcher with `board_notifier.py --config /absolute/config.json init --baseline current`, then run its `watch` command
 
-- Read current Issue titles, bodies, authorized user comments and relevant repository artifacts from the selected board
-- Use `tasks_list` to reconcile existing work, then `executor_start` to dispatch eligible tasks into independent persistent sessions, up to three concurrently
-- Respect current-version dependencies, owned paths and shared resources; preserve dirty files in the project
-- Inspect progress and artifacts with `executor_status` and `executor_result`; use `executor_continue` for corrections in the original session
-- Use `task_finish` to record the coordinator's evidence-based decision and configured write-back
+The example deliberately disables write-back. Live GitHub execution requires authorized live claim writes and verified board mappings; turn those on only after review. Copying this skill does not register MCP tools or refresh an already running client.
 
-An executor finishing its turn is not project completion. Accepted changes remain in isolated worktrees (`isolated_unmerged`) until separately integrated. There is no automatic merge, push, deployment or Issue closure. Reports from this mode are private local HTML files; the tool provides no hosted URL.
+## Work and acceptance
 
-## Requirements and setup
+`tasks_list` → `executor_start` → `executor_status` / `executor_result` → `executor_continue` when corrections are needed → `task_finish` after review.
 
-Use macOS or Linux, Python 3.9+, Node.js, authenticated Codex and GitHub CLIs, and separately installed [mcp-agents](https://github.com/thomaswitt/mcp-agents) for executor sessions. Native board notifications use the supported shared Codex app-server. The acpx/codex-acp transport and external HTML renderer belong to the legacy controller workflow, not the new direct delegation path.
+Up to three independent jobs can run concurrently. Dependencies use accepted job IDs; they provide pinned receipts, not automatic patch integration. Owned paths, resources, source revisions and durable receipts guard dispatch and recovery.
 
-For a local skill installation, back up any existing copy and place SKILL.md, VALIDATION.md, scripts/, references/ and assets/ under `$HOME/.codex/skills/project-delegation/`. Then follow [coordinator setup](references/coordinator-tools.md) to configure the exact project/board scope, enrollment, isolated executors, authorized write-back and stdio MCP connection. Examples are not live credentials or ready-to-run production profiles.
+Executor completion means its turn ended. Acceptance records reviewed implementation evidence. Changes stay in isolated worktrees until separately integrated. There is no automatic merge, push, deployment or Issue closure. Reports are private local HTML files without a hosted URL.
 
-Migration is a separate explicit configuration switch after active work has settled. Preserve the existing owner, task sessions and receipts. The notifier's `--baseline current` deliberately skips notifications for currently eligible versions; inspect current work rather than assuming it will replay. New and legacy dispatch owners cannot run together.
-
-## Stop and uninstall
-
-Stop only the notifier/watcher/controller you started with Ctrl-C or SIGTERM; check any explicitly configured supervisor before restarting. Detached executor work can outlive the MCP connection: observe it and let admitted work settle before removing its runtime. Keep original sessions, reports, worktrees and private state until reviewed.
-
-To uninstall, remove the installed skill directory and only the MCP or hook entries you added. Remove dedicated dependencies only if no other project uses them.
-
-The legacy watcher reads a real local file. A ChatGPT sidebar Page/Canvas is not automatically mapped to PROJECT.md, and idle UI wakeup requires a supported host interface. Session synchronization and transport support remain host dependent.
+Stop only a watcher you started and intend to stop. Detached executors may outlive an MCP connection; preserve their original sessions, worktrees and receipts until reviewed. Remove only your own MCP entries and installed skill files when uninstalling.
 
 ## Documentation and tests
 
 - [Skill workflow](SKILL.md)
-- [Coordinator MCP tools, enrollment and migration](references/coordinator-tools.md)
-- [Legacy current-session binding](references/manual-coordinator.md)
-- [Shared GitHub configuration and legacy operations](references/github-acpx.md)
-- [Legacy PROJECT.md watcher and hooks](references/file-watch.md)
+- [Setup and coordinator tool contracts](references/coordinator-tools.md)
 - [Validation evidence and limitations](VALIDATION.md)
 
-Run the portable offline suite from the repository root:
-
-```sh
-PROJECT_DELEGATION_TEST_NODE=python3 \
-PROJECT_DELEGATION_TEST_HTML_CLI="$PWD/tests/backend_renderer.py" \
-python3 -m unittest discover -s tests -v
-python3 scripts/scan_release.py
-```
-
-Fixture success does not establish live MCP installation, desktop synchronization, native wakeup or live GitHub write-back.
+Run `python3 -m unittest discover -s tests -v` and `python3 scripts/scan_release.py` from this repository. Offline fixtures do not establish live MCP installation, native wakeup or GitHub write-back.
 
 MIT. See [LICENSE](LICENSE) and [THIRD_PARTY.md](THIRD_PARTY.md).

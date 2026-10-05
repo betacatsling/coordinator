@@ -44,43 +44,42 @@ The tool returns `integration: isolated_unmerged`, renders an escaped private lo
 
 If the source has changed, acceptance refuses the stale result. Explicitly rejecting an inactive stale job retires it locally as `superseded`, releases its leases and returns `source_changed: true` with `writeback: null`; it does not publish stale results. Rejection of an unchanged task remains retryable in the original session.
 
-## Setup and activation
+## Fresh setup
 
-This repository contains the coordinator-driven implementation. Its presence, documentation or offline tests do not establish that a running Codex session has loaded the MCP server. Check [validation evidence](../VALIDATION.md) and the actual tools exposed in the chosen session before reporting live availability.
+Use `assets/fresh-config.example.json` as a template, not a ready-to-run profile. Set the selected repository, Project, authorized user, absolute workspace and exact board mappings. Enable isolated executors. Live GitHub execution requires authorized enabled, non-dry-run claim write-back. Capacity is one to three jobs, default three.
 
-Configuration uses `delegation.enabled: true` with the existing project board/source, executor runtime, write-back and report settings. Enable isolated executors (`executor.enabled` and `executor.isolate_worktree`); this mode supports one to three parallel jobs, default three. Live GitHub execution requires a verified board mapping and enabled, non-dry-run claim write-back. Configure those writes only within the user's authorization. The server reads only `notifier_state_directory/state.json` (default `.project-delegation/board-notifier/state.json`). Its top-level `scope` and `binding.scope` must match the project; `binding.transport` must be `app_server`, and `binding.provider_thread_id` must match the actual runtime `CODEX_THREAD_ID`. There is no legacy-state fallback. A title, user-supplied ID or manually edited identity is not evidence of a valid binding.
+Run from the selected workspace:
 
-The stdio server entry point is:
+```sh
+python3 /absolute/skill/scripts/coordinator_bootstrap.py --config /absolute/config.json init
+python3 /absolute/skill/scripts/coordinator_bootstrap.py --config /absolute/config.json status
+```
+
+The entry point reads the actual runtime `CODEX_THREAD_ID` and verifies native AppServer thread identity, cwd and loaded status. It initializes `.project-delegation/runtime/binding.json` or verifies an exact matching binding. A different owner or scope and a populated unbound runtime fail closed. There is no thread-ID override, ownership transfer, state conversion, process termination or automatic startup. A status check does not create state. `app_server_socket` may select a supported socket; otherwise the endpoint is discovered through the configured `codex` executable.
+
+All durable files live under the fixed `.project-delegation/runtime` directory: `binding.json`, `jobs.json`, `notifier.json`, plus locks and job artifacts. Do not point configuration at a different state directory. Existing data elsewhere is neither imported nor deleted.
+
+## Explicit MCP connection
+
+Register this stdio command using the actual Codex client's supported MCP configuration:
 
 ```sh
 python3 /absolute/skill/scripts/delegation_mcp.py --config /absolute/config.json
 ```
 
-Register that command using the supported MCP configuration for the actual Codex client; run it with the authentic chosen session's runtime context. Never insert a copied `CODEX_THREAD_ID` into a generic global server configuration. Verify tool discovery and a read-only `tasks_list` call in the bound session. Do not promise that copying this skill automatically registers the server, refreshes tools in a running session, restarts Codex or starts a watcher. Report exactly which setup step is still needed if discovery or identity checks fail.
+Run it with the authentic chosen session's runtime context. Never insert a copied `CODEX_THREAD_ID` into a generic global server configuration. Check that all six tools are actually exposed in the chosen session, inspect their installed schemas and verify a successful read-only `tasks_list` call. A source checkout, bootstrap success or offline tests do not prove a live MCP connection. Installation does not refresh a running client or start a watcher. Report the specific missing setup step when discovery or identity checks fail.
 
-## Migrate without losing work
+## Optional notification-only watcher
 
-Treat the coordination-mode switch as a separate explicit configuration change:
-
-1. Inspect the existing owner, controller, queue and executor receipts. Keep the current owner authoritative while admitted work is active. Preserve every existing running task and its original session during migration.
-2. Let that work settle and reconcile its output, publication and integration state. A worker's completion alone does not settle a task whose artifact is still isolated or whose result is unpublished.
-3. Preserve bindings, baseline/queue observations, deduplication markers and executor receipts. Use the supported handoff/configuration path once safe; do not edit identities to manufacture readiness or run two dispatch owners.
-4. Verify the selected session's new tools and ownership before starting new work. Confirm any watcher that remains is notification-only; an old executing controller is not a harmless notifier.
-
-The [binding guide](manual-coordinator.md) and [GitHub workflow](github-acpx.md) document older controller modes and shared configuration. Do not combine their controller-driven planning/dispatch loop with the direct MCP workflow. An installation or source update leaves the existing live configuration unchanged until the explicit switch is performed.
-
-## Enrollment and optional board notifications
-
-`scripts/board_notifier.py` establishes the owner state used by the delegation server and provides notification-only watching. After the authorized mode switch, initialize it with the verified registration and explicit baseline choice before connecting the server. Continuous watching is optional:
+After a binding is initialized, explicitly choose a current-board baseline:
 
 ```sh
-python3 scripts/board_notifier.py --config /absolute/config.json init \
-  --registration /absolute/registration.json --baseline current
+python3 scripts/board_notifier.py --config /absolute/config.json init --baseline current
 python3 scripts/board_notifier.py --config /absolute/config.json once
-# Or, when continuous notifications are wanted:
+# Only when continuous notifications are requested:
 python3 scripts/board_notifier.py --config /absolute/config.json watch
 ```
 
-`--baseline current` silently records all currently eligible versions; it does not replay them. Confirm this migration choice deliberately so ready work is not mistaken for automatically dispatched work. Inspect current tasks through the coordinator tools as appropriate. Subsequent changed versions or ready-state re-entry can notify the chosen session.
+`--baseline current` records currently eligible versions silently. They remain available through `tasks_list`; initialization does not replay or dispatch them. Subsequent source changes or ready-state re-entry may notify the bound session. The watcher never plans, claims, dispatches or accepts work. Its own `notifier.lock` prevents duplicate scanners; the service uses `jobs.lock` for durable job transactions.
 
-The notifier uses a separate `notifier_state_directory` (default `.project-delegation/board-notifier`), the existing board/source scope and `delegation.enabled: true`. The notifier, delegation service and detached workers hold the canonical `.project-delegation/github-acpx/controller.lock` shared for their lifetimes. The legacy controller requires that lock exclusively, so it cannot run alongside them. The notifier additionally holds an exclusive `notifier.lock` in its own state directory to prevent duplicate scanners. Lock acquisition precedes state reads and initialization. Its default watch interval is ten seconds. Use `status` to inspect its outbox and errors; an uncertain submission is retained for reconciliation rather than automatically resent. A queued notification is not evidence that the coordinator has processed it or dispatched an executor.
+Use the watcher's `status` command to inspect its outbox and errors. An uncertain submission remains for reconciliation rather than being automatically resent. A queued notification does not prove the coordinator processed it. Check [validation evidence](../VALIDATION.md) before claiming native delivery or live GitHub execution has been verified.

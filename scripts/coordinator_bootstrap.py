@@ -1,171 +1,113 @@
 #!/usr/bin/env python3
-"""Resolve the current project and enroll/reuse its actual coordinator identity."""
+"""Bind the actual current native Codex thread to a fresh project runtime."""
 import argparse
 import fcntl
 import json
 import os
 from pathlib import Path
-import re
-import subprocess
-import sys
-from urllib.parse import urlsplit
 import uuid
-from register_coordinator import enroll
 
-REQUIRED=('workspace','repository','project_node_id','user_login')
+from app_server_client import AppServer, endpoint
+from state_io import atomic_write
+
+SCOPE_KEYS = ('workspace', 'repository', 'project_node_id', 'user_login')
 
 
-def git_context(cwd):
+def bootstrap(config_path, *, cwd=None, environment=None, inspect=False,
+              client_factory=AppServer):
+    """Verify native identity before creating or reusing a project binding.
+
+    The injectable client is for offline tests. Production always uses the native
+    AppServer thread/read response; no caller-supplied thread override exists.
+    """
+    path = Path(config_path).resolve(strict=True)
+    config = json.loads(path.read_text())
+    for key in SCOPE_KEYS:
+        if not isinstance(config.get(key), str) or not config[key].strip():
+            raise ValueError('Missing project scope: ' + key)
+    if not Path(config['workspace']).is_absolute():
+        raise ValueError('Workspace must be absolute')
+    workspace = Path(config['workspace']).resolve(strict=True)
+    current = Path(cwd or os.getcwd()).resolve(strict=True)
+    if current != workspace and workspace not in current.parents:
+        raise ValueError('Current working directory is outside selected workspace')
+    scope = {key: config[key] for key in SCOPE_KEYS}
+    scope['workspace'] = str(workspace)
+    env = os.environ if environment is None else environment
+    identity = env.get('CODEX_THREAD_ID', '')
     try:
-        r=subprocess.run(['git','-C',str(cwd),'rev-parse','--show-toplevel'],capture_output=True,text=True,timeout=10)
-        if r.returncode:return None,None
-        root=Path(r.stdout.strip()).resolve()
-        r=subprocess.run(['git','-C',str(root),'remote','get-url','origin'],capture_output=True,text=True,timeout=10)
-        raw=r.stdout.strip() if not r.returncode else ''
-    except (OSError,subprocess.TimeoutExpired):return None,None
-    match=re.fullmatch(r'git@github\.com:([^/]+/[^/]+?)(?:\.git)?',raw)
-    if match:return root,match.group(1)
-    parsed=urlsplit(raw)
-    if parsed.hostname=='github.com':
-        name=parsed.path.strip('/')
-        if name.endswith('.git'):name=name[:-4]
-        if re.fullmatch(r'[^/]+/[^/]+',name):return root,name
-    return root,None
-
-
-def resolve_config(cwd=None,home=None,explicit=None):
-    cwd=Path(cwd or os.getcwd()).resolve(strict=True);home=Path(home or Path.home()).resolve()
-    git_root,remote=git_context(cwd)
-    paths=[]
-    if explicit:paths=[Path(explicit)]
-    else:
-        for ancestor in [cwd,*cwd.parents]:
-            paths.extend([ancestor/'.project-delegation/github-acpx/config.json',ancestor/'.project-delegation/config.json'])
-        registry=home/'.local/share/project-delegation/projects'
-        if registry.is_dir():paths.extend(sorted(registry.glob('*/config.json')))
-    matches=[];invalid=[];seen=set()
-    for path in paths:
-        if not path.is_file():continue
-        path=path.resolve()
-        if path in seen:continue
-        seen.add(path)
-        try:
-            c=json.loads(path.read_text())
-            if not isinstance(c,dict) or not isinstance(c.get('workspace'),str):raise ValueError()
-            if not Path(c['workspace']).is_absolute():
-                invalid.append({'config_path':str(path),'missing':['absolute workspace']});continue
-            workspace=Path(c['workspace']).resolve(strict=True)
-            if cwd!=workspace and workspace not in cwd.parents:continue
-            if git_root and workspace!=git_root:continue
-            missing=[key for key in REQUIRED if not isinstance(c.get(key),str) or not c[key].strip()]
-            if missing:invalid.append({'config_path':str(path),'missing':missing});continue
-            if remote and c['repository'].lower()!=remote.lower():
-                return {'status':'blocked','reason':'Git origin differs from configured repository; refusing scope change'}
-            c['workspace']=str(workspace)
-            matches.append((len(workspace.parts),path,c))
-        except (OSError,ValueError,TypeError,KeyError):
-            # Never print arbitrary configuration contents, errors or remote credentials.
-            if explicit:return {'status':'needs_configuration','reason':'Selected project configuration is unreadable or incomplete'}
-    if not matches:return {'status':'needs_configuration','repository':remote,'missing':invalid or ['matching project binding'],'question':'Which existing GitHub Project should this workspace use?'}
-    depth=max(item[0] for item in matches);matches=[item for item in matches if item[0]==depth]
-    if len(matches)>1:return {'status':'needs_selection','choices':[{'config_path':str(p),'repository':c['repository'],'project_node_id':c['project_node_id']} for _,p,c in matches],'question':'Which existing binding should this project use?'}
-    _,path,c=matches[0]
-    return {'status':'resolved','config_path':str(path),'config':c,'scope':{key:c[key] for key in REQUIRED}}
-
-
-def owner_present(folder):
-    path=folder/'controller.lock'
-    if not path.exists():return False
-    with open(path,'r') as lock:
-        try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        except BlockingIOError:return True
-        return False
-
-
-def bootstrap(cwd=None,home=None,environment=None,explicit=None,inspect=False):
-    found=resolve_config(cwd,home,explicit)
-    if found['status']!='resolved':return found
-    c=found['config'];scope=found['scope'];workspace=Path(scope['workspace']).resolve(strict=True)
-    backstage=(workspace/'.project-delegation').resolve();folder=Path(c.get('state_directory',str(backstage/'github-acpx'))).resolve()
-    if workspace not in backstage.parents or backstage not in folder.parents:return {'status':'blocked','reason':'Project state path escapes workspace'}
-    out={key:found[key] for key in ['config_path','scope']}
-    env=os.environ if environment is None else environment;thread=env.get('CODEX_THREAD_ID','')
+        if str(uuid.UUID(identity)) != identity:
+            raise ValueError()
+    except (ValueError, TypeError, AttributeError):
+        raise ValueError('Valid runtime CODEX_THREAD_ID required; do not paste or override identities')
+    root = workspace / '.project-delegation' / 'runtime'
+    folder = Path(config.get('state_directory', root)).resolve()
+    if workspace not in root.resolve().parents or folder != root.resolve():
+        raise ValueError('Fresh state must remain within .project-delegation/runtime')
+    binding_path = folder / 'binding.json'
+    # A status read does not create directories or lock files.
+    if inspect and not binding_path.exists():
+        return {'status': 'uninitialized', 'scope': scope, 'binding_path': str(binding_path)}
+    if not inspect:
+        folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lock = None
     try:
-        if str(uuid.UUID(thread))!=thread:raise ValueError()
-    except (ValueError,TypeError,AttributeError):return dict(out,status='blocked',reason='Current tool runtime does not provide a valid CODEX_THREAD_ID; do not ask the user to guess/paste/override an identity')
-    try:state=json.loads((folder/'state.json').read_text()) if (folder/'state.json').exists() else {}
-    except (OSError,ValueError):return dict(out,status='blocked',reason='Existing controller state is unreadable; preserve it for recovery')
-    if not isinstance(state,dict):return dict(out,status='blocked',reason='Existing controller state has invalid structure; preserve it for recovery')
-    identity=state.get('identity')
-    if identity and not isinstance(identity,dict):return dict(out,status='blocked',reason='Existing controller identity has invalid structure')
-    if identity and any(identity.get(key)!=scope[key] for key in REQUIRED):return dict(out,status='blocked',reason='Existing controller scope differs from selected configuration')
-    binding=state.get('binding') or {}
-    if not isinstance(binding,dict):return dict(out,status='blocked',reason='Existing controller binding has invalid structure')
-    old=binding.get('provider_thread_id')
-    if old and not identity:return dict(out,status='blocked',reason='Existing owner has no verifiable project scope; preserve it for recovery')
-    try:present=owner_present(backstage/'github-acpx')
-    except OSError:return dict(out,status='blocked',reason='Cannot inspect existing owner lock; preserve current owner')
-    out.update(provider_thread_id=thread,previous_provider_thread_id=old,owner_present=present)
-    if old==thread and binding.get('transport')=='app_server':
-        if present:return dict(out,status='active',action='reuse_existing_owner',activation_performed=False)
-        result=dict(out,status='blocked',action='restore_existing_controller',activation_performed=False,
-                    reason='The saved coordinator binding has no running controller')
-        if inspect or not c.get('auto_start_controller',False):return result
-        try:
-            from app_server_client import AppServer
-            with AppServer(binding['socket_path']) as client:client.thread(thread,workspace)
-            with open(folder/'controller.log','a') as output:
-                process=subprocess.Popen([sys.executable,str(Path(__file__).with_name('project_acpx.py')),'--config',str(found['config_path']),'run'],cwd=str(workspace),stdin=subprocess.DEVNULL,stdout=output,stderr=output,start_new_session=True)
-            result.update(status='pending',action='controller_started_activation_pending',controller_pid=process.pid)
-            result.pop('reason',None)
-        except (OSError,ValueError,RuntimeError,KeyError) as exc:result['reason']=str(exc)
-        return result
-    if old==thread:
-        ledger=Path(c.get('provider_ledger',str(folder/'provider.json'))).resolve()
-        if backstage not in ledger.parents:return dict(out,status='blocked',reason='Provider ledger leaves project scope')
-        try:provider=json.loads(ledger.read_text()).get('provider_thread_id')
-        except (OSError,ValueError,AttributeError):provider=None
-        if provider!=thread:return dict(out,status='blocked',reason='Existing binding/ledger disagree; never replace it automatically')
-        return dict(out,status='active',action='reuse_existing_owner',activation_performed=False)
-    def request_handoff(path, receipt):
-        result=dict(out,status='pending',registration=str(path),registration_status=receipt['status'],
-                    action='finish_current_turn_then_supported_handoff',first_owner=not bool(old),activation_performed=False)
-        if c.get('coordinator_transport')=='app_server' and not inspect:
+        if not inspect:
+            lock = open(folder / 'binding.lock', 'a')
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        existing = json.loads(binding_path.read_text()) if binding_path.exists() else None
+        if existing is not None:
+            if not isinstance(existing, dict) or not isinstance(existing.get('binding'), dict):
+                raise ValueError('Invalid existing binding; refusing overwrite')
+            binding = existing['binding']
+            if (existing.get('schema') != 1 or existing.get('scope') != scope
+                    or binding.get('scope') != scope
+                    or binding.get('transport') != 'app_server'
+                    or binding.get('provider_thread_id') != identity):
+                raise ValueError('Existing binding belongs to another owner or scope; refusing overwrite')
+        elif any(folder.iterdir()):
+            if any(p.name != 'binding.lock' for p in folder.iterdir()):
+                raise ValueError('Unbound runtime contains existing data; refusing initialization')
+        socket_path = config.get('app_server_socket') or endpoint(config['codex'])
+        with client_factory(socket_path) as client:
+            thread = client.thread(identity, workspace)
+        # Verify explicitly even for custom fixture backends.
+        if (thread.get('id') != identity or not thread.get('cwd')
+                or Path(thread['cwd']).resolve() != workspace
+                or thread.get('status', {}).get('type') not in ('active', 'idle')):
+            raise ValueError('Native thread identity, workspace or loaded status differs')
+        if existing is None:
+            value = {'schema': 1, 'scope': scope, 'binding': {
+                'transport': 'app_server', 'provider_thread_id': identity,
+                'scope': scope, 'socket_path': str(socket_path)}}
+            atomic_write(binding_path, json.dumps(value, indent=2) + '\n')
+            os.chmod(binding_path, 0o600)
+            fd = os.open(folder, os.O_RDONLY)
             try:
-                from app_server_client import register_request
-                job,value=register_request(found['config_path'],path,receipt,old)
-                result.update(handoff_request=str(job),handoff_status=value['status'],action='single_controller_will_apply_binding')
-                if not present:
-                    if not c.get('auto_start_controller',False):
-                        result.update(status='blocked',reason='No controller is running; configure its supervisor or explicitly enable auto_start_controller')
-                    else:
-                        log=folder/'controller.log'
-                        with open(log,'a') as output:
-                            process=subprocess.Popen([sys.executable,str(Path(__file__).with_name('project_acpx.py')),'--config',str(found['config_path']),'run'],cwd=str(workspace),stdin=subprocess.DEVNULL,stdout=output,stderr=output,start_new_session=True)
-                        result['controller_pid']=process.pid
-                        result['action']='controller_started_activation_pending'
-
-            except (OSError,ValueError,RuntimeError,KeyError) as exc:
-                result.update(status='blocked',reason=str(exc),action='restore_supported_app_server_connection')
-        return result
-    registration=folder/'enrollments'/(thread+'.json')
-    if registration.exists():
-        try:receipt=json.loads(registration.read_text())
-        except (OSError,ValueError):return dict(out,status='blocked',reason='Existing enrollment unreadable; do not replace it')
-        if not isinstance(receipt,dict) or receipt.get('scope')!=scope or receipt.get('provider_thread_id')!=thread or receipt.get('identity_source')!='runtime:CODEX_THREAD_ID':return dict(out,status='blocked',reason='Existing enrollment scope or runtime provenance differs')
-        if receipt.get('status')=='adopted':return dict(out,status='blocked',reason='Previously adopted enrollment differs from current owner; explicit recovery required')
-        result=request_handoff(registration,receipt)
-        if c.get('coordinator_transport')!='app_server':result['action']='continue_existing_handoff_after_current_turn'
-        return result
-    if inspect:return dict(out,status='registration_needed',action='enroll_existing_current_thread',first_owner=not bool(old),activation_performed=False)
-    # Role enrollment is bounded/idempotent; actual ACP verification must be post-turn.
-    try:path,receipt=enroll(found['config_path'],environment=env,cwd=workspace)
-    except (OSError,ValueError,TypeError,KeyError):return dict(out,status='blocked',reason='Current runtime enrollment could not be written safely; preserve existing state')
-    return request_handoff(path,receipt)
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        return {'status': 'verified' if inspect else ('reused' if existing else 'initialized'),
+                'scope': scope, 'provider_thread_id': identity,
+                'binding_path': str(binding_path)}
+    finally:
+        if lock is not None:
+            lock.close()
 
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--inspect',action='store_true');p.add_argument('--config',type=Path)
-    a=p.parse_args();value=bootstrap(explicit=a.config,inspect=a.inspect);print(json.dumps(value,ensure_ascii=False))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--config', required=True, type=Path)
+    parser.add_argument('command', choices=('init', 'status'))
+    args = parser.parse_args()
+    try:
+        value = bootstrap(args.config, inspect=args.command == 'status')
+    except (OSError, ValueError, TypeError, KeyError, RuntimeError) as error:
+        print(json.dumps({'status': 'blocked', 'reason': str(error)}))
+        return 1
+    print(json.dumps(value))
+    return 0
 
-if __name__=='__main__':main()
+
+if __name__ == '__main__':
+    raise SystemExit(main())

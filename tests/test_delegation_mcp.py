@@ -66,14 +66,14 @@ class DelegationTests(unittest.TestCase):
         self.bridge = self.base / 'bridge.py'
         self.bridge.write_text(BRIDGE)
         self.config = {'workspace': str(self.workspace), 'project_node_id': 'P', 'repository': 'u/r', 'user_login': 'u',
-            'source': {'type': 'fixture', 'path': str(self.source)}, 'delegation': {'enabled': True}, 'node': sys.executable,
+            'source': {'type': 'fixture', 'path': str(self.source)}, 'node': sys.executable,
             'executor': {'enabled': True, 'isolate_worktree': True, 'server': str(self.bridge), 'bridge_state_root': str(self.base / 'bridge-state'), 'allowed_resources': ['database']}}
         self.config_path = self.base / 'config.json'
         self.config_path.write_text(json.dumps(self.config))
-        self.owner_path = self.workspace / '.project-delegation/board-notifier/state.json'
+        self.owner_path = self.workspace / '.project-delegation/runtime/binding.json'
         self.owner_path.parent.mkdir(parents=True)
         scope = {k: self.config[k] for k in ('workspace', 'project_node_id', 'repository', 'user_login')}
-        self.owner_path.write_text(json.dumps({'scope': scope, 'binding': {'scope': scope, 'provider_thread_id': self.owner, 'transport': 'app_server'}}))
+        self.owner_path.write_text(json.dumps({'schema': 1, 'scope': scope, 'binding': {'scope': scope, 'provider_thread_id': self.owner, 'transport': 'app_server'}}))
         self.service = DelegationService(self.config_path)
         self.jobs = []
 
@@ -203,17 +203,17 @@ class DelegationTests(unittest.TestCase):
         with self.service.transaction() as state:
             self.assertEqual(state['jobs'][job['id']]['assignment'], 'FIRST')
 
-    def test_lifetime_owner_lock_excludes_legacy(self):
-        from project_acpx import Coordinator
-        with self.assertRaisesRegex(ValueError, 'delegation|Delegation|notifier|Notifier'):
-            Coordinator(self.config_path)
-        lock_path = self.workspace/'.project-delegation/github-acpx/controller.lock'
-        with open(lock_path, 'a') as lock:
-            with self.assertRaises(BlockingIOError):fcntl.flock(lock, fcntl.LOCK_EX|fcntl.LOCK_NB)
-            self.service.close()
-            fcntl.flock(lock, fcntl.LOCK_EX|fcntl.LOCK_NB)
-            with self.assertRaisesRegex(ValueError, 'Legacy autonomous'):
-                DelegationService(self.config_path)
+    def test_shared_services_use_one_durable_ledger(self):
+        second = DelegationService(self.config_path)
+        self.addCleanup(second.close)
+        with self.service.transaction() as state:
+            state['marker'] = 'shared'
+        with second.transaction() as state:
+            self.assertEqual(state['marker'], 'shared')
+        self.assertEqual(self.service.root, self.workspace / '.project-delegation/runtime')
+        self.service.close()
+        with self.assertRaisesRegex(ValueError, 'closed'):
+            self.service.tasks_list()
 
     def test_manifest_detects_added_files_and_supports_deletion_only(self):
         task={'issue_id':'manifest','revision_hash':'revision','dispatch_key':'dispatch'}

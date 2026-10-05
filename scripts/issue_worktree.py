@@ -3,7 +3,7 @@
 from pathlib import Path
 import hashlib
 import json
-from watch_project import atomic_write
+from state_io import atomic_write
 import subprocess
 
 PROTECTED={'.git','.codex','.agents','.project-delegation','reports'}

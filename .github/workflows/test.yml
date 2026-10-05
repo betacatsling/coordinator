@@ -5,7 +5,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PROJECT_DELEGATION_TEST_NODE: python3
-      PROJECT_DELEGATION_TEST_HTML_CLI: ${{ github.workspace }}/tests/backend_renderer.py
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

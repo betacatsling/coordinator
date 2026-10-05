@@ -10,7 +10,7 @@ import hashlib
 import html
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import subprocess
 import sys
 import time
@@ -25,8 +25,12 @@ from github_writeback import (is_workflow_comment, write_claim, write_result,
 from issue_worktree import validate_paths, create, resume
 from mcp_executor import (execute_assignment, resume_assignment, recover_assignment,
     validated_receipt, task_identity)
-from parallel_executors import overlaps
-from project_acpx import fetch, gh
+from github_source import fetch, gh
+
+
+def overlaps(a, b):
+    a, b = PurePosixPath(a), PurePosixPath(b)
+    return a == b or a in b.parents or b in a.parents
 
 
 ACTIVE = {'reserved', 'running', 'recovery_required', 'waiting_for_input'}
@@ -37,30 +41,16 @@ class DelegationService:
         self.config_path = Path(config_path).resolve(strict=True)
         self.config = json.loads(self.config_path.read_text())
         c = self.config
-        if c.get('delegation', {}).get('enabled') is not True:
-            raise ValueError('Coordinator delegation MCP must be explicitly enabled')
         self.workspace = Path(c['workspace']).resolve(strict=True)
         backstage = (self.workspace / '.project-delegation').resolve()
-        self.folder = Path(c.get('state_directory', backstage / 'github-acpx')).resolve()
-        if self.workspace not in backstage.parents or backstage not in self.folder.parents:
+        self.folder = backstage / 'runtime'
+        if self.workspace not in backstage.parents or self.folder.resolve().parent != backstage:
             raise ValueError('State must remain inside selected project backstage')
-        self.owner_folder = Path(c.get('notifier_state_directory', backstage / 'board-notifier')).resolve()
-        if backstage not in self.owner_folder.parents:
-            raise ValueError('Notifier identity state must remain inside project backstage')
-        # Shared mode coexists with the notification-only listener, but excludes
-        # an already-running legacy autonomous controller's exclusive owner lock.
-        lock_folder = backstage / 'github-acpx'
-        lock_folder.mkdir(parents=True, exist_ok=True)
-        if lock_folder.resolve().parent != backstage:
-            raise ValueError('Controller owner lock escapes backstage')
-        self.owner_lock = open(lock_folder / 'controller.lock', 'a')
-        try:
-            fcntl.flock(self.owner_lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
-        except BaseException:
-            self.owner_lock.close()
-            raise ValueError('Legacy autonomous controller is active; stop it explicitly before delegation')
-        self.root = self.folder / 'delegation'
+        if 'state_directory' in c and Path(c['state_directory']).resolve() != self.folder:
+            raise ValueError('State directory must be workspace/.project-delegation/runtime')
+        self.root = self.folder
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.closed = False
         self.path = self.root / 'jobs.json'
         self.scope = {key: c[key] for key in ('project_node_id', 'repository', 'user_login')}
         self.scope['workspace'] = str(self.workspace)
@@ -76,15 +66,10 @@ class DelegationService:
                 raise ValueError('GitHub execution requires verified board mapping and enabled live claim writeback')
 
     def close(self):
-        if getattr(self, 'owner_lock', None):
-            self.owner_lock.close()
-            self.owner_lock = None
-
-    def __del__(self):
-        self.close()
+        self.closed = True
 
     def _authorize(self):
-        if not getattr(self, 'owner_lock', None) or self.owner_lock.closed:
+        if getattr(self, 'closed', True):
             raise ValueError('Delegation service is closed')
         if hashlib.sha256(self.config_path.read_bytes()).hexdigest() != self.config_hash:
             raise ValueError('Configuration changed; reconnect with reviewed configuration')
@@ -93,7 +78,9 @@ class DelegationService:
                 raise ValueError()
         except (ValueError, AttributeError):
             raise ValueError('Valid runtime CODEX_THREAD_ID required; caller cannot supply an identity')
-        state = json.loads((self.owner_folder / 'state.json').read_text())
+        state = json.loads((self.folder / 'binding.json').read_text())
+        if state.get('schema') != 1:
+            raise ValueError('Unknown coordinator binding schema')
         if state.get('binding', {}).get('transport') != 'app_server' or state.get('binding', {}).get('provider_thread_id') != self.owner:
             raise ValueError('Only the bound fixed coordinator may use delegation tools')
         identity = state.get('scope', {})
@@ -114,7 +101,7 @@ class DelegationService:
 
     def _source(self, state):
         project = fetch(self.config)
-        ignored = list(self.config.get('result_comment_ids', []))
+        ignored = []
         for item in project.get('items', {}).get('nodes', []):
             issue = item.get('content') or {}
             for comment in issue.get('comments', {}).get('nodes', []):

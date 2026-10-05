@@ -3,7 +3,7 @@
 import hashlib
 import json
 
-def normalize_project(project, selected_node_id, user_login, result_comment_ids=(), selected_repository=None, *, include_titles=True):
+def normalize_project(project, selected_node_id, user_login, result_comment_ids=(), selected_repository=None):
     if project.get('id') != selected_node_id:
         raise ValueError('Project identity does not match the selected binding')
     ignored=set(result_comment_ids);tasks=[]
@@ -19,15 +19,14 @@ def normalize_project(project, selected_node_id, user_login, result_comment_ids=
         if comments.get('pageInfo',{}).get('hasNextPage'):
             raise ValueError('Incomplete Issue comment page; fetch all pages before normalization')
         authorized=(issue.get('author') or {}).get('login','').lower()==user_login.lower()
-        title=issue.get('title','') if authorized and include_titles else ''
+        title=issue.get('title','') if authorized else ''
         body=issue.get('body','') if authorized else ''
         accepted=[{'id':c['id'],'body':c.get('body','')} for c in comments.get('nodes',[])
                   if c.get('id') not in ignored and (c.get('author') or {}).get('login','').lower()==user_login.lower()]
         if not title.strip() and not body.strip() and not any(c['body'].strip() for c in accepted):continue
         accepted.sort(key=lambda c:c['id'])
         revision={'issue_id':issue['id'],'body':body,'comments':accepted}
-        # Missing titles retain legacy fixture/input hashes. Authorized titles are
-        # instructions too, and changes to them must create a new revision.
+        # Authorized title changes create a new task revision.
         if title.strip():revision['title']=title
         digest=hashlib.sha256(json.dumps(revision,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
         instructions='\n\n'.join(value for value in (title,body) if value.strip())

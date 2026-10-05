@@ -1,22 +1,12 @@
 import copy
-import functools
-import http.server
-import json
-import os
-import shutil
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
-import threading
 import unittest
-from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from github_project_inputs import normalize_project
 from github_writeback import write_result, write_claim, is_result_comment, is_workflow_comment
 from issue_worktree import create, inspect, validate_paths, git
-from project_acpx import Coordinator
-from github_board import assert_claimable
 
 class BackendTests(unittest.TestCase):
     def setUp(self):
@@ -76,41 +66,12 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(again['operations'],[]);self.assertFalse(any(q.startswith('mutation') for q,v in self.calls))
         result_preview=write_result(self.c,self.task,self.project,'done',{},True,self.gh,True)
         self.assertEqual(result_preview['operations'][0]['operation'],'add_comment')
-        # Scanner rediscovers claim even if local comment receipts were lost.
-        obj=Coordinator.__new__(Coordinator);obj.config=self.c;obj.state={'queue':[{'task':self.task,'status':'running'}],'result_comment_ids':[]};obj.save=lambda:None
-        with patch('project_acpx.fetch',return_value=self.project):obj.scan()
-        self.assertEqual(len(obj.state['queue']),1);self.assertEqual(obj.state['result_comment_ids'],['C'])
-
-    def test_only_admission_posts_and_invalid_scope_blocks(self):
-        self.c.update(source={'type':'github'});self.c['writeback'].update(enabled=True,dry_run=False)
-        self.c['writeback']['status'].update(claimed_option_id='ready',claimed_option_name='Review')
-        obj=Coordinator.__new__(Coordinator);obj.config=self.c;obj.state={'queue':[],'result_comment_ids':[]};obj.save=lambda:None;obj.verify=lambda:None
-        with patch('project_acpx.fetch',return_value=self.project),patch('project_acpx.gh',side_effect=self.gh) as api:
-            obj.scan();self.assertEqual(obj.state['queue'][0]['status'],'pending');api.assert_not_called()
-            self.assertTrue(obj.admit(0));self.assertEqual(obj.state['queue'][0]['status'],'running');self.assertEqual(obj.state['queue'][0]['claim']['comment_id'],'C')
-            with self.assertRaises(ValueError):obj.admit(0)
-        self.calls=[];obj.state={'queue':[{'task':self.task,'status':'pending'}],'result_comment_ids':[]}
-        invalid=copy.deepcopy(self.project);invalid['id']='wrong'
-        with patch('project_acpx.fetch',return_value=invalid),patch('project_acpx.gh',side_effect=self.gh):self.assertFalse(obj.admit(0))
-        self.assertEqual(obj.state['queue'][0]['status'],'blocked');self.assertFalse(any(q.startswith('mutation') for q,v in self.calls))
-
-    def test_board_ready_transition_dispatches_baseline_and_dedupes(self):
-        c=copy.deepcopy(self.c);c['board']={'view_id':'V','view_filter':'-类型:"项目跟踪"','status_field_id':'S','ready_option_id':'todo','ready_option_name':'待做','type_field_id':'T','excluded_type_option_id':'tracking','excluded_type_option_name':'项目跟踪'}
-        p=copy.deepcopy(self.project);p['views']={'nodes':[{'id':'V','filter':c['board']['view_filter'],'layout':'BOARD_LAYOUT'}]}
-        p['fields']={'nodes':[{'id':'S','options':[{'id':'todo','name':'待做'}]},{'id':'T','options':[{'id':'tracking','name':'项目跟踪'}]}]}
-        values=[{'field':{'id':'S'},'optionId':'triage'},{'field':{'id':'T'},'optionId':'research'}];p['items']['nodes'][0]['fieldValues']={'nodes':values}
-        obj=Coordinator.__new__(Coordinator);obj.config=c;obj.state={'queue':[{'task':self.task,'status':'baseline'}],'result_comment_ids':[]};obj.save=lambda:None
-        with patch('project_acpx.fetch',return_value=p):
-            obj.scan();self.assertEqual(len(obj.state['queue']),1)
-            values[0]['optionId']='todo';obj.scan();self.assertEqual(len(obj.state['queue']),2)
-            queued=obj.state['queue'][1];self.assertEqual(queued['task']['revision_hash'],self.task['revision_hash']);self.assertEqual(queued['task']['ready_generation'],1)
-            obj.scan();self.assertEqual(len(obj.state['queue']),2)
-            assert_claimable(p,c,queued['task']);values[0]['optionId']='working';obj.scan();self.assertEqual(queued['status'],'superseded')
-            with self.assertRaises(ValueError):assert_claimable(p,c,queued['task'])
-            values[0]['optionId']='todo';obj.scan();self.assertEqual(len(obj.state['queue']),3);self.assertEqual(obj.state['queue'][2]['task']['ready_generation'],2)
-            values[1]['optionId']='tracking';obj.scan();self.assertEqual(obj.state['queue'][2]['status'],'superseded')
-            p['views']['nodes'][0]['filter']='';
-            with self.assertRaises(ValueError):obj.scan()
+        # Workflow comments remain excluded even when local receipts were lost.
+        comments = self.project['items']['nodes'][0]['content']['comments']['nodes']
+        discovered = [c['id'] for c in comments if is_workflow_comment(c['body'], self.c, 'I')]
+        self.assertEqual(discovered, ['C'])
+        fresh = normalize_project(self.project, 'P', 'u', discovered, 'u/r')[0]
+        self.assertEqual(fresh['revision_hash'], self.task['revision_hash'])
 
     def test_dirty_main_tree_preserved_and_scope_enforced(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -126,24 +87,6 @@ class BackendTests(unittest.TestCase):
             with self.assertRaises(ValueError):create(repo,self.task,root/'state')
             for scope in [['.git'],['../escape'],['.'],['docs/.codex/foo']]:
                 with self.assertRaises(ValueError):validate_paths(scope)
-    def test_live_legacy_watcher_blocks_new_owner(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp);(root/'.project-delegation').mkdir()
-            (root/'.project-delegation/state.json').write_text(json.dumps({'watcher_pid':os.getpid()}))
-            obj=Coordinator.__new__(Coordinator);obj.workspace=root
-            with self.assertRaisesRegex(RuntimeError,'Legacy watcher is alive'):obj.run(once=True)
 
-    def test_report_base_url_on_loopback(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp);folder=root/'state';folder.mkdir();reports=root/'reports';reports.mkdir()
-            handler=functools.partial(http.server.SimpleHTTPRequestHandler,directory=str(reports))
-            server=http.server.ThreadingHTTPServer(('127.0.0.1',0),handler);threading.Thread(target=server.serve_forever,daemon=True).start()
-            try:
-                obj=Coordinator.__new__(Coordinator);obj.workspace=root;obj.folder=folder
-                obj.config={'node':os.environ.get('PROJECT_DELEGATION_TEST_NODE',shutil.which('node')),'html_cli':os.environ.get('PROJECT_DELEGATION_TEST_HTML_CLI',str(Path.home()/'.codex/skills/answer-me-with-html/scripts/am.mjs')),'report_base_url':'http://127.0.0.1:'+str(server.server_port)}
-                report=obj.publish({'task':self.task},'Fixture report')
-                self.assertTrue(report['access_verified']);self.assertTrue(report['url'].startswith('http://127.0.0.1:'))
-                self.assertTrue(Path(report['local_path']).is_file())
-            finally:server.shutdown();server.server_close()
 
 if __name__=='__main__':unittest.main()

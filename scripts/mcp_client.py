@@ -1,4 +1,4 @@
-"""Shared MCP connection for independent execution and optional legacy watcher."""
+"""MCP connection for independent executor sessions."""
 import json
 import queue
 import subprocess
@@ -14,7 +14,7 @@ class MCP:
         self.lock = threading.Lock()
         threading.Thread(target=self._read, daemon=True).start()
         self.rpc('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {},
-                               'clientInfo': {'name': 'project-delegation-watch', 'version': '1.0'}})
+                               'clientInfo': {'name': 'project-delegation-executor', 'version': '1.0'}})
         self._send({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
         names = {t['name'] for t in self.rpc('tools/list')['tools']}
         required = {'codex-thread-read', 'codex-reply-start', 'codex-status', 'codex-result'}

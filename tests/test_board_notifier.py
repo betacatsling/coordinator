@@ -40,28 +40,29 @@ class NotifierTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name).resolve()
         self.config = dict(base.config, workspace=str(self.root), source={'type': 'fixture'},
-                           app_server_socket='socket', delegation={'enabled': True})
+                           app_server_socket='socket')
         self.config_path = self.root / 'config.json'; self.write_config()
         self.identity = str(uuid.UUID(int=1))
-        folder = self.root / '.project-delegation/github-acpx/enrollments'; folder.mkdir(parents=True)
-        self.registration = folder / (self.identity + '.json')
-        self.receipt = {'provider_thread_id': self.identity, 'identity_source': 'runtime:CODEX_THREAD_ID',
-                        'scope': dict(workspace=str(self.root), repository='u/r', project_node_id='P', user_login='u')}
+        folder = self.root / '.project-delegation/runtime'; folder.mkdir(parents=True)
+        self.registration = folder / 'binding.json'
+        scope = dict(workspace=str(self.root), repository='u/r', project_node_id='P', user_login='u')
+        self.receipt = {'schema': 1, 'scope': scope, 'binding': {
+            'provider_thread_id': self.identity, 'transport': 'app_server', 'scope': scope}}
         self.registration.write_text(json.dumps(self.receipt))
         Client.sent = []; Client.turns = []; Client.failure = None; Client.status = 'active'
     def write_config(self): self.config_path.write_text(json.dumps(self.config))
     def notifier(self): return BoardNotifier(self.config_path, client_factory=Client, fetcher=lambda _: copy.deepcopy(self.project))
     def initialize(self):
-        obj = self.notifier(); self.addCleanup(obj.close); obj.initialize(self.registration, 'current'); return obj
+        obj = self.notifier(); self.addCleanup(obj.close); obj.initialize('current'); return obj
     def edit(self, body='new task'): self.project['items']['nodes'][0]['content']['body'] = body
     def change_status(self, status): self.project['items']['nodes'][0]['fieldValues']['nodes'][0]['optionId'] = status
     def test_explicit_baseline_no_historical_replay(self):
         with self.notifier() as obj:
             with self.assertRaises(ValueError): obj.once()
-            with self.assertRaises(ValueError): obj.initialize(self.registration, None)
-            obj.initialize(self.registration, 'current'); obj.once()
+            with self.assertRaises(ValueError): obj.initialize(None)
+            obj.initialize('current'); obj.once()
             self.assertEqual(obj.state['outbox'], []); self.assertEqual(Client.sent, [])
-            with self.assertRaises(ValueError): obj.initialize(self.registration, 'current')
+            with self.assertRaises(ValueError): obj.initialize('current')
     def test_change_queue_busy_fixed_thread_and_restart_dedup(self):
         obj = self.initialize(); self.edit(); obj.once(); obj.once()
         self.assertEqual(len(Client.sent), 1)
@@ -110,46 +111,44 @@ class NotifierTests(unittest.TestCase):
         Client.status = 'idle'; obj.once(); obj.once(); self.assertEqual(len(Client.sent), 1)
     def test_scope_mismatch_rejected_on_init_and_restart(self):
         self.receipt['scope']['user_login'] = 'other'; self.registration.write_text(json.dumps(self.receipt))
-        with self.notifier() as obj:
-            with self.assertRaises(ValueError): obj.initialize(self.registration, 'current')
+        with self.assertRaises(ValueError): self.notifier()
         self.receipt['scope']['user_login'] = 'u'; self.registration.write_text(json.dumps(self.receipt))
         obj = self.initialize(); obj.close(); self.config['repository'] = 'other/repo'; self.write_config()
         with self.assertRaises(ValueError): self.notifier()
-    def test_singleton_uses_legacy_controller_lock(self):
+    def test_singleton_uses_own_lock(self):
         obj = self.initialize()
         with self.assertRaises(BlockingIOError): self.notifier()
-        self.assertEqual(Path(obj.lock.name), self.root / '.project-delegation/github-acpx/controller.lock')
-    def test_cross_process_shared_service_lock_and_exclusive_legacy_lock(self):
+        self.assertEqual(Path(obj.notifier_lock.name), self.root / '.project-delegation/runtime/notifier.lock')
+    def test_cross_process_notifier_lock(self):
         obj = self.initialize()
         probe = ('import fcntl,sys; f=open(sys.argv[1],"a"); '
-                 'fcntl.flock(f, int(sys.argv[2]) | fcntl.LOCK_NB)')
-        import fcntl
-        shared = subprocess.run([sys.executable, '-c', probe, obj.lock.name, str(fcntl.LOCK_SH)], capture_output=True)
-        exclusive = subprocess.run([sys.executable, '-c', probe, obj.lock.name, str(fcntl.LOCK_EX)], capture_output=True)
-        singleton = subprocess.run([sys.executable, '-c', probe, obj.notifier_lock.name, str(fcntl.LOCK_EX)], capture_output=True)
-        self.assertEqual(shared.returncode, 0)
-        self.assertNotEqual(exclusive.returncode, 0)
+                 'fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)')
+        lock_path = obj.notifier_lock.name
+        singleton = subprocess.run([sys.executable, '-c', probe, lock_path], capture_output=True)
         self.assertNotEqual(singleton.returncode, 0)
-        lock_path = obj.lock.name; obj.close()
-        released = subprocess.run([sys.executable, '-c', probe, lock_path, str(fcntl.LOCK_EX)], capture_output=True)
+        obj.close()
+        released = subprocess.run([sys.executable, '-c', probe, lock_path], capture_output=True)
         self.assertEqual(released.returncode, 0)
     def test_invalid_snapshot_does_not_advance_observations(self):
         obj = self.initialize(); before = copy.deepcopy(obj.state)
         self.project['views']['nodes'][0]['filter'] = 'broadened'
         with self.assertRaises(ValueError): obj.once()
         self.assertEqual(obj.state, before)
-    def test_enable_and_separate_state_required(self):
-        self.config['delegation']['enabled'] = False; self.write_config()
+    def test_board_and_fixed_state_required(self):
+        board = self.config.pop('board'); self.write_config()
         with self.assertRaises(ValueError): self.notifier()
-        self.config['delegation']['enabled'] = True
-        self.config['notifier_state_directory'] = str(self.root / '.project-delegation/github-acpx'); self.write_config()
+        self.config['board'] = board
+        self.config['state_directory'] = str(self.root / 'elsewhere'); self.write_config()
         with self.assertRaises(ValueError): self.notifier()
-    def test_legacy_state_is_never_migrated_or_changed(self):
-        legacy = self.root / '.project-delegation/github-acpx/state.json'
-        original = '{"binding":{"provider_thread_id":"old"},"queue":[{"status":"running"}]}'
-        legacy.write_text(original)
+    def test_changed_binding_stops_delivery(self):
+        obj = self.initialize(); self.edit(); obj.observe()
+        self.receipt['binding']['provider_thread_id'] = str(uuid.uuid4())
+        self.registration.write_text(json.dumps(self.receipt))
+        with self.assertRaisesRegex(ValueError, 'binding changed'): obj.deliver()
+        self.assertEqual(Client.sent, [])
+    def test_fresh_state_contains_only_runtime(self):
         obj = self.initialize(); obj.once()
-        self.assertEqual(legacy.read_text(), original)
+        self.assertEqual([p.name for p in (self.root / '.project-delegation').iterdir()], ['runtime'])
         self.assertEqual(obj.state['outbox'], [])
     def test_rejected_and_uncertain_survive_process_restart(self):
         obj = self.initialize(); self.edit(); Client.failure = RequestRejected('denied'); obj.once()

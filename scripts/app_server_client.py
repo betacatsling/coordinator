@@ -105,19 +105,3 @@ def turn_result(thread, request_text):
     messages=[i.get('text','') for i in turn.get('items',[]) if i.get('type')=='agentMessage' and i.get('phase')!='commentary']
     if not messages:raise TurnFailed('Completed coordinator turn has no final response')
     return '\n'.join(messages)
-
-
-def register_request(config_path, registration, receipt, expected_old, client_factory=AppServer):
-    """Queue a binding request for the existing single controller, not a new worker."""
-    from state_io import atomic_write
-    config=json.loads(Path(config_path).read_text())
-    socket_path=config.get('app_server_socket') or endpoint(config['codex'])
-    with client_factory(socket_path) as client:client.thread(receipt['provider_thread_id'],config['workspace'])
-    request=dict(receipt,expected_old=expected_old,transport='app_server',socket_path=socket_path,status='queued',requested_at=time.time())
-    path=Path(registration).with_name(receipt['provider_thread_id']+'-request.json')
-    if path.exists():
-        existing=json.loads(path.read_text())
-        if existing.get('expected_old')!=expected_old or existing.get('scope')!=receipt['scope']:raise ValueError('Conflicting existing ownership request')
-        if existing.get('status') in ('queued','adopted'):return path,existing
-    atomic_write(path,json.dumps(request,indent=2))
-    return path,request
