@@ -1,4 +1,6 @@
 """Offline title-input regressions: no GitHub calls or production state."""
+import hashlib
+import json
 import unittest
 from unittest.mock import patch
 
@@ -19,6 +21,7 @@ class GitHubTitleInputTests(unittest.TestCase):
 
     def test_authorized_title_only_is_actionable(self):
         task = self.normalize(self.project())[0]
+        self.assertEqual(task['title'], 'Implement a bounded helper')
         self.assertEqual(task['instructions'], 'Implement a bounded helper')
         self.assertEqual(task['user_comments'], [])
 
@@ -33,6 +36,7 @@ class GitHubTitleInputTests(unittest.TestCase):
         self.assertEqual(original, self.normalize(project)[0])
         project['items']['nodes'][0]['content']['title'] = 'Implement a different bounded helper'
         updated = self.normalize(project)[0]
+        self.assertEqual(updated['title'], 'Implement a different bounded helper')
         self.assertNotEqual(original['revision_hash'], updated['revision_hash'])
         self.assertEqual(updated, self.normalize(project)[0])
 
@@ -53,6 +57,8 @@ class GitHubTitleInputTests(unittest.TestCase):
         issue['title'] = 'Changed untrusted title'
         updated = self.normalize(project)[0]
         self.assertEqual(task['instructions'], '')
+        self.assertEqual(task['title'], '')
+        self.assertEqual(updated['title'], '')
         self.assertEqual(task['revision_hash'], updated['revision_hash'])
         self.assertEqual(task['user_comments'][0]['body'], 'Authorized comment')
 
@@ -71,6 +77,17 @@ class GitHubTitleInputTests(unittest.TestCase):
 
     def test_blank_title_and_body_without_comments_still_ignored(self):
         self.assertEqual(self.normalize(self.project(title='  ', body='\n')), [])
+
+    def test_display_title_does_not_change_existing_revision_payload(self):
+        for title in ('Implement a bounded helper', ''):
+            with self.subTest(title=title):
+                task = self.normalize(self.project(title=title, body='Existing instruction'))[0]
+                revision = {'issue_id': 'fixture-issue', 'body': 'Existing instruction', 'comments': []}
+                if title:
+                    revision['title'] = title
+                expected = hashlib.sha256(json.dumps(revision, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+                self.assertEqual(task['title'], title)
+                self.assertEqual(task['revision_hash'], expected)
 
     def test_github_fetch_requests_issue_title(self):
         project = self.project()

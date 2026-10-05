@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import uuid
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,6 +82,27 @@ class ExecutorLifecycleTests(unittest.TestCase):
         self.assertEqual(resumed['previous_turns'][0]['artifacts'], first['artifacts'])
         starts = [name for name, _ in FakeMCP.calls if name.endswith('start')]
         self.assertEqual(starts, ['codex-start', 'codex-reply-start'])
+        self.assertNotEqual(resumed['attempt_id'], first['attempt_id'])
+
+    def test_receipt_attempt_pins_recovery_and_new_continuation(self):
+        self.config['attempt_id'] = str(uuid.uuid4())
+        first = self.run_first()
+        self.assertEqual(first['attempt_id'], self.config['attempt_id'])
+        wrong = dict(self.config, attempt_id=str(uuid.uuid4()))
+        with self.assertRaisesRegex(ExecutorRecoveryRequired, 'attempt identity'):
+            recover_assignment(wrong, self.receipt, 'unused')
+        self.assertEqual(sum(name.endswith('start') for name, _ in FakeMCP.calls), 1)
+        resumed = resume_assignment('bounded next turn', wrong, self.receipt, 'unused')
+        self.assertEqual(resumed['attempt_id'], wrong['attempt_id'])
+        self.assertEqual(resumed['previous_turns'][0]['attempt_id'], first['attempt_id'])
+
+    def test_explicit_recovery_can_bind_preupgrade_receipt_without_resubmission(self):
+        first = self.run_first()
+        first.pop('attempt_id'); self.receipt.write_text(json.dumps(first))
+        self.config['attempt_id'] = str(uuid.uuid4())
+        result = recover_assignment(self.config, self.receipt, 'unused')
+        self.assertEqual(result['attempt_id'], self.config['attempt_id'])
+        self.assertEqual(sum(name.endswith('start') for name, _ in FakeMCP.calls), 1)
 
     def test_existing_receipt_is_not_overwritten(self):
         self.run_first()

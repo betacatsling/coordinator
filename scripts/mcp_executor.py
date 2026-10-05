@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import subprocess
 import time
+import uuid
 from contextlib import contextmanager
 from mcp_client import MCP
 from state_io import atomic_write
@@ -70,6 +71,8 @@ def validated_receipt(config, receipt_path):
     """Read-only reuse of evidence requires unchanged identity and actual artifacts."""
     workspace,root,paths=_validate(config)
     receipt=_bound_receipt(config,Path(receipt_path),workspace,root,paths)
+    if config.get('attempt_id') and receipt.get('attempt_id') != config['attempt_id']:
+        raise ValueError('Executor receipt attempt differs')
     if receipt.get('status')!='verified':raise ValueError('Receipt has no verified result')
     if config.get('isolate_worktree'):
         from issue_worktree import inspect, git
@@ -115,6 +118,7 @@ def _execute(prompt, config, receipt_path, node, on_session, mode):
             if receipt_path.exists() or config.get('resume_thread_id'):
                 raise ExecutorRecoveryRequired('Existing executor requires explicit receipt-bound recovery')
             receipt = {'status': 'initializing', 'workspace': str(workspace), 'owned_paths': paths,
+                       'attempt_id': config.get('attempt_id') or str(uuid.uuid4()),
                        'bridge_state_root': str(root), 'base_head': config.get('base_head'),
                        'task_identity': task_identity(config['task_identity']) if config.get('task_identity') else None}
         else:
@@ -128,8 +132,15 @@ def _execute(prompt, config, receipt_path, node, on_session, mode):
                 for key in ('checks', 'artifacts', 'error', 'executor_result', 'completed_at', 'job_id', 'cursor'):
                     receipt.pop(key, None)
                 receipt['status'] = 'initializing'
+                receipt['attempt_id'] = config.get('attempt_id') or str(uuid.uuid4())
             elif not receipt.get('job_id'):
                 raise ExecutorRecoveryRequired('Submission outcome is unknown; inspect bridge before retrying')
+            elif config.get('attempt_id'):
+                if receipt.get('attempt_id') not in {None, config['attempt_id']}:
+                    raise ExecutorRecoveryRequired('Original executor attempt identity differs')
+                # An explicit owner-authorized recovery can adopt a pre-upgrade
+                # receipt after its original task/worktree/job are validated.
+                receipt['attempt_id'] = config['attempt_id']
         def save():
             atomic_write(receipt_path, json.dumps(receipt, indent=2))
         root.mkdir(parents=True, exist_ok=True)

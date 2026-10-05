@@ -30,6 +30,6 @@ def normalize_project(project, selected_node_id, user_login, result_comment_ids=
         if title.strip():revision['title']=title
         digest=hashlib.sha256(json.dumps(revision,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
         instructions='\n\n'.join(value for value in (title,body) if value.strip())
-        tasks.append({'issue_id':issue['id'],'issue_number':issue.get('number'),'url':issue.get('url'),'instructions':instructions,
+        tasks.append({'issue_id':issue['id'],'issue_number':issue.get('number'),'url':issue.get('url'),'title':title,'instructions':instructions,
                       'user_comments':accepted,'revision_hash':digest})
     return tasks

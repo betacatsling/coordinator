@@ -1,55 +1,52 @@
 # project-delegation
 
-Make your chosen native Codex session the project coordinator. It reads the board and repository, dispatches independent persistent executors through MCP, requests corrections and accepts verified outcomes. [中文](README.zh-CN.md)
+Use your chosen native Codex session to read the project, dispatch independent persistent executors and review their work. [中文](README.zh-CN.md)
 
 ## Start
 
-Tell your chosen session: **Be this project's coordinator** or **你作为这个项目的 coordinator**.
+Tell your chosen session: **Be this project's coordinator using /absolute/project.json**.
 
-With a reviewed project configuration, it verifies the actual runtime `CODEX_THREAD_ID` against the native AppServer thread identity and workspace, then initializes a fresh binding. The coordinator makes planning, dispatch and acceptance decisions directly through tools. An optional board watcher only notifies it about changed inputs.
+With setup complete, it verifies this session, starts or reuses notifications and the local dashboard, reads `tasks_list`, dispatches independent executors, then ends its turn until a completion notice prompts review. Board changes reach the same coordinator session.
 
-This is experimental, fresh-only code. There is no state conversion, ownership transfer or compatibility mode. It uses `.project-delegation/runtime` and preserves existing files elsewhere. Nothing automatically installs tools, starts a new shared app-server or changes a live project configuration. Requested connections on Windows start and clean up their own official byte-relay child.
+Notifications supply input; the coordinator still plans, requests corrections and accepts verified outcomes. Service health, queued input, a started or completed coordinator turn and task acceptance are separate facts.
 
 ## Setup
 
-Follow the [Installation guide (中文)](references/installation.md) for installation, MCP registration and first-run verification.
+Use Python 3.9+, Node.js 26+, authenticated Codex and GitHub CLIs, and separately installed [mcp-agents](https://github.com/thomaswitt/mcp-agents). All runtime components and the chosen coordinator's shared native AppServer belong on the same machine.
 
-Use macOS, Linux or the native Windows portability candidate, Python 3.9+, Node.js, authenticated Codex and GitHub CLIs, and separately installed [mcp-agents](https://github.com/thomaswitt/mcp-agents). The chosen coordinator must be loaded in a supported shared native Codex AppServer.
+1. Follow [installation](references/installation.md) to install the skill and executor dependency
+2. Review [the example configuration](assets/fresh-config.example.json), supplying the repository, Project, authorized user, exact board mappings and executor permissions
+3. Register `python3 /absolute/skill/scripts/delegation_mcp.py --config /absolute/project.json` using your Codex client's MCP setup and load it in the chosen session. The host must supply per-call `_meta.threadId`; never copy a thread ID into global configuration
+4. Give the one-sentence request above. The session runs `coordinator_bootstrap.py --config /absolute/project.json init` from the selected workspace and verifies a real `tasks_list` call
 
-1. Review [the example configuration](assets/fresh-config.example.json), fill in the selected repository, Project, authorized user and exact board mappings, and review executor and write-back permissions
-2. From the selected workspace, run `python3 /absolute/skill/scripts/coordinator_bootstrap.py --config /absolute/config.json init`
-3. Explicitly register `python3 /absolute/skill/scripts/delegation_mcp.py --config /absolute/config.json` using your Codex client's supported MCP setup. Use a host that supplies per-call `_meta.threadId`; MCP startup needs no thread environment variable. Never copy a thread ID into global server configuration
-4. Verify discovery of the six coordinator tools in the chosen session and a successful read-only `tasks_list` call
-5. Optionally initialize the watcher with `board_notifier.py --config /absolute/config.json init --baseline current`, then run its `watch` command
+Bootstrap creates or verifies the binding under `.project-delegation/runtime`; it does not install tools, create a new shared AppServer or change project configuration. Existing files elsewhere are preserved. The example disables GitHub write-back; live execution needs explicitly authorized claim writes and verified board mappings.
 
-The example deliberately disables write-back. Live GitHub execution requires authorized live claim writes and verified board mappings; turn those on only after review. Copying this skill does not register MCP tools or refresh an already running client.
+The dashboard opens in the default browser when a local desktop is detected. `--no-open` suppresses browser opening, while the local service still starts. Use the returned URL; [remote access](references/web-dashboard.md) needs a private tunnel arranged separately.
 
-Windows uses the configured `codex.exe` and official `app-server proxy` to reach the existing daemon. See [Windows prerequisites, WSL2 alternative and validation boundary](references/windows-transport.md). Linux-hosted contract tests pass; native Windows and WSL2 live end-to-end operation have not been verified.
+Windows uses the configured `codex.exe` and official `app-server proxy` to reach the existing daemon. [Windows prerequisites and validation limits](references/windows-transport.md) include the WSL2 alternative. Full model-driven native macOS, Windows and WSL2 end-to-end operation remains unverified; observed host checks are recorded in VALIDATION.md.
 
-## Work and acceptance
+## Work and review
 
-`tasks_list` → `executor_start` → `executor_status` / `executor_result` → `executor_continue` when corrections are needed → `task_finish` after review.
+`tasks_list` → `executor_start` → end this turn → completion notice → `executor_status` / `executor_result` → `executor_continue` for corrections or `task_finish` after review.
 
-Up to three independent jobs can run concurrently. Dependencies use accepted job IDs; they provide pinned receipts, not automatic patch integration. Owned paths, resources, source revisions and durable receipts guard dispatch and recovery.
+Up to three independent jobs can run concurrently. Dependencies use accepted job IDs and pinned receipts, without automatic patch integration. Owned paths, resources, source revisions and durable receipts guard dispatch and recovery. When all useful independent work is dispatched, yield instead of repeatedly polling or sleeping inside a tool call.
 
-Executor completion means its turn ended. Acceptance records reviewed implementation evidence. Changes stay in isolated worktrees until separately integrated. There is no automatic merge, push, deployment or Issue closure. Reports are private local HTML files without a hosted URL.
+An executor finishing its turn makes its result available for review. Acceptance records reviewed implementation evidence; isolated worktrees still need separately authorized integration. Nothing automatically merges, pushes, deploys or closes Issues.
 
-Stop only a watcher you started and intend to stop. Detached executors may outlive an MCP connection; preserve their original sessions, worktrees and receipts until reviewed. Remove only your own MCP entries and installed skill files when uninstalling.
+Private HTML reports can be read in the dashboard's isolated static preview or downloaded, with verified GitHub links for context. JavaScript and external resources are disabled in previews. Reports have no public hosted URL.
 
-## Local WebUI
+Detached executors and local services may outlive an MCP connection. Preserve original sessions, worktrees and receipts until reviewed; stop only services you own and intend to stop.
 
-Download and open the [standalone offline demo](examples/dashboard-demo.html) to preview synthetic data without connecting to a project.
-
-Run `python3 scripts/web_dashboard.py --config /absolute/project-config.json`, then open the printed `http://127.0.0.1:18766` address on the same computer. Repeat `--config` to view multiple projects; use `--port 0` for a free local port. See [dashboard setup and limits](references/web-dashboard.md).
-
-The dashboard shows saved project/task/executor state and report downloads. It is read-only: no dispatch, acceptance, GitHub writes or live liveness probes. HTTP/API and DOM contract fixtures do not establish actual browser rendering; desktop/mobile visual QA remains unverified.
+To uninstall, remove only the installed skill and MCP entries you added; preserve sessions, worktrees and private state until reviewed.
 
 ## Documentation and tests
 
+- [Standalone synthetic-data demo](examples/dashboard-demo.html) — download and open locally
 - [Skill workflow](SKILL.md)
-- [Setup and coordinator tool contracts](references/coordinator-tools.md)
-- [Validation evidence and limitations](VALIDATION.md)
+- [Coordinator tool contracts](references/coordinator-tools.md)
+- [Local dashboard and reports](references/web-dashboard.md)
+- [Validation evidence and limits](VALIDATION.md)
 
-Run `python3 -m unittest discover -s tests -v` and `python3 scripts/scan_release.py` from this repository. Offline fixtures do not establish live MCP installation, native wakeup or GitHub write-back.
+Run `python3 -m unittest discover -s tests -v` and `python3 scripts/scan_release.py`. Offline fixtures do not establish live installation, notification wakeup or GitHub write-back.
 
 MIT. See [LICENSE](LICENSE) and [THIRD_PARTY.md](THIRD_PARTY.md).

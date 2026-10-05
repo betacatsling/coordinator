@@ -119,6 +119,24 @@ class NotifierTests(unittest.TestCase):
         obj = self.initialize()
         with self.assertRaises(BlockingIOError): self.notifier()
         self.assertEqual(Path(obj.notifier_lock.name), self.root / '.project-delegation/runtime/notifier.lock')
+    def test_readonly_status_works_while_watcher_lock_is_held(self):
+        obj = self.initialize()
+        before = {p.name: p.read_bytes() for p in obj.folder.iterdir() if p.is_file()}
+        with BoardNotifier(self.config_path, readonly=True) as status:
+            self.assertEqual(status.status()['baseline']['count'], 1)
+        after = {p.name: p.read_bytes() for p in obj.folder.iterdir() if p.is_file()}
+        self.assertEqual(before, after)
+
+    def test_configuration_change_stops_observation_and_delivery(self):
+        obj = self.initialize(); self.edit(); obj.observe()
+        self.config['source'] = {'type': 'github'}; self.write_config()
+        with self.assertRaisesRegex(ValueError, 'configuration changed'):
+            obj.deliver()
+        self.assertEqual(Client.sent, [])
+        obj.close()
+        with self.assertRaisesRegex(ValueError, 'scope/board differs'):
+            self.notifier()
+
     def test_cross_process_notifier_lock(self):
         obj = self.initialize()
         probe = ('import fcntl,sys; f=open(sys.argv[1],"a"); '

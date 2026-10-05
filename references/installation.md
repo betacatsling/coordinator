@@ -1,6 +1,6 @@
 # 安装与首次运行 / Installation
 
-这份指南从全新安装开始，包含 skill、MCP、通知器和 Web 看板。英文工具契约见 [coordinator-tools.md](coordinator-tools.md)。先完成安装和真实工具验证，再对选定的 Codex 会话说：**你作为这个项目的 coordinator**。
+完成一次安装后，只需对选定的 Codex 会话说：**你作为这个项目的 coordinator，使用配置文件 /绝对路径/project.json**。它会验证当前会话，启动或复用本地看板与通知服务，读取任务并协调执行。英文工具契约见 [coordinator-tools.md](coordinator-tools.md)。
 
 ## 1. 选择运行位置
 
@@ -138,7 +138,7 @@ gh api graphql -f id=REPLACE_PROJECT_NODE_ID -f 'query=query($id:ID!){node(id:$i
 
 这条命令也可在 PowerShell 使用。出现分页、权限不足或字段缺失时先解决映射，不能跳过范围校验。任务只吸收指定用户的 Issue 标题、正文及评论；其他用户的信息不会自动成为执行授权。
 
-模板默认 `writeback.enabled=false`、`dry_run=true`，适合先做安装和只读验证。**真实 GitHub executor 启动前**，审阅并授权评论及状态写回后，才改为 `enabled=true`、`dry_run=false`；仅改配置不代表取得授权。
+模板默认 `writeback.enabled=false`、`dry_run=true`，只支持安装和只读核对。如要真实执行，应在**首次 `init` 前**审阅并授权评论及状态回写，再设为 `enabled=true`、`dry_run=false`；仅改配置不代表取得授权。通知历史会固定这份配置，不能在初始化后直接切换写回设置。
 
 ## 5. 注册 MCP，然后选择 coordinator
 
@@ -166,7 +166,7 @@ codex mcp list
 
 工具可见后，对你选定的会话说：
 
-> 你作为这个项目的 coordinator。使用配置文件 /绝对路径/project.json，先验证当前原生会话并初始化绑定，然后调用 tasks_list 核对任务；先不要启动 executor 或 watcher。
+> 你作为这个项目的 coordinator，使用配置文件 /绝对路径/project.json。
 
 该会话应在自己的工具运行环境中，从配置的 workspace 执行以下命令（绝对路径替换为真实路径）：
 
@@ -175,44 +175,43 @@ python3 /absolute/skill/scripts/coordinator_bootstrap.py --config /absolute/proj
 python3 /absolute/skill/scripts/coordinator_bootstrap.py --config /absolute/project.json status
 ```
 
-Windows 用 `python`。这里必须使用实际会话注入的 `CODEX_THREAD_ID`，普通终端手工粘贴 ID 不属于安装步骤。bootstrap 会校验共享 AppServer 中的同一个已加载线程及 workspace；它不会启动新 AppServer。确认返回 `initialized` 或 `reused`，再让 coordinator 实际调用一次只读 `tasks_list`。有绑定但调用缺少身份元数据，仍然没有接通。
+Windows 用 `python`。这里必须使用实际会话注入的 `CODEX_THREAD_ID`，普通终端手工粘贴 ID 不属于安装步骤。bootstrap 会校验共享 AppServer 中的同一个已加载线程及 workspace；它不会启动新 AppServer。确认返回 `initialized` 或 `reused`，再让 coordinator 实际调用一次只读 `tasks_list`。当前已有卡片会成为通知基线，因此首次读取不能省略。有绑定但调用缺少身份元数据，仍然没有接通；没有授权真实执行时，停在只读核对。
 
-已有绑定属于另一会话、旧状态或 scope 不匹配时应停下来核对。不要删除状态来“修好”安装；本版本只支持 fresh 初始化，没有旧状态迁移或 coordinator 所有权转移。
+`init` 绑定成功后默认启动或复用一个本地服务，负责 Web 看板、看板变化通知和完成通知协调；不需要再单独启动 watcher。检测到本机桌面时，会在默认浏览器打开对应项目。重复初始化不会为同一个 coordinator 重复打开已成功请求打开的页面。`--no-open` 或配置 `"dashboard": {"auto_open": false}` **只关闭自动打开浏览器**，仍会启动或复用看板。以返回的 `dashboard_url` 为准；`opened` 只表示浏览器接受了打开请求。`status` 只检查绑定和服务状态，不启动服务或打开浏览器。服务启动失败会返回警告，不会使已成功的绑定失效，但此时不能声称通知已经可用。
 
-## 6. 可选：开启看板变化通知
+已有绑定属于另一会话、scope 不匹配或未绑定目录里已有运行数据时，应停下来核对。已有通知历史也固定原配置，后续修改会被拒绝；应恢复原配置，不要删除状态绕过检查。临时不打开浏览器可用 `--no-open`，无须改配置。
 
-绑定验证成功后，明确选择“当前内容作为基线”：
+## 6. 分派后结束本轮，等通知再审阅
 
-```sh
-python3 /absolute/skill/scripts/board_notifier.py --config /absolute/project.json init --baseline current
-python3 /absolute/skill/scripts/board_notifier.py --config /absolute/project.json once
-# 需要持续通知时，在专用终端保持运行
-python3 /absolute/skill/scripts/board_notifier.py --config /absolute/project.json watch --interval 10
-```
+Coordinator 首次通过 `tasks_list` 读取当前任务，按授权范围分派可独立执行的 executor，然后结束当前一轮。不要通过长时间 sleep 或反复轮询占住会话。Executor 结果与完成通知先持久保存，再尝试送回同一个 coordinator；后续看板变化也送到这个会话。
 
-Windows 用 `python`。基线不会重放现有待做卡片；它们仍可通过 `tasks_list` 读取。watcher 只通知后续变化，不分配或验收任务。用 `status` 子命令检查通知状态，Ctrl+C 只停止自己启动的 watcher。关闭终端后不会自动变成后台服务。
+完成通知到达后，coordinator 用 `executor_status` / `executor_result` 检查结果，需要修正时用 `executor_continue` 继续原会话，核验后才调用 `task_finish`。看板变化通知到达时，先重新调用 `tasks_list` 对照当前版本和已有任务。通知服务不替 coordinator 做规划、分派或验收。
 
-## 7. 启动 Web 看板
+用前面的 bootstrap `status` 命令检查本地服务。服务健康、通知已排队、coordinator 一轮已开始或已结束、任务已验收应分别核对。`queued` 只表示收到排队回执；`delivered` 表示原线程里已找到这条输入，还要看 `turn_status` 是处理中、完成、失败还是中断。结果不明确的提交保留待核对，不盲目重发，也不另建 coordinator。
 
-在项目实际运行机器上启动：
+## 7. 查看 Web 看板
 
-```sh
-python3 /absolute/skill/scripts/web_dashboard.py --config /absolute/project.json --port 18766
-```
+正常 `init` 已自动启动看板与通知服务，无须再开一个服务。它在后台运行，直到显式停止或运行机器关机；关闭浏览器标签页不会停止服务，也不会安装登录或系统启动项。运行信息在项目的 `.project-delegation/runtime/dashboard.json`，通知健康记录在 `notifier-service.json`，启动日志在同目录的 `dashboard.log`。从绑定会话的原 workspace 运行 `coordinator_bootstrap.py --config /absolute/project.json stop`，可一起停止看板和 watcher；`stopping` 表示尚未确认退出。它不会停止 executor 或删除历史，再次 `init` 可启动服务。
 
-PowerShell 同样用 `python`；也可以用上文变量：`python "$Skill/scripts/web_dashboard.py" --config "$Config" --port 18766`。
-
-本机浏览器打开终端打印的地址，通常为 `http://127.0.0.1:18766`。如果运行在 Linux 服务器，在 Mac 另开终端，使用**自己已经配置好的 SSH 主机别名**：
+本机浏览器使用 `init` 返回的 `dashboard_url`，保留 `?project=...` 项目选择。默认优先使用端口 18766，被占用时自动选择空闲端口。SSH、CI 或无桌面环境不会自动打开浏览器，返回地址只属于实际运行机器，不能直接从 Mac 访问。如果运行在 Linux 服务器，需要在 Mac 另开终端，使用**自己已经配置好的 SSH 主机别名**建立私有隧道。假设返回端口为 18766：
 
 ```sh
 ssh -N -L 127.0.0.1:18766:127.0.0.1:18766 YOUR_SERVER_ALIAS
 ```
 
-再用 Mac 浏览器打开 `http://127.0.0.1:18766`，两个进程都保持运行。服务器示例别名可以叫 `server1`，这里只是占位，不包含任何真实地址或用户名。端口占用时两端一致换端口；不要为此开放防火墙或绑定公网。
+保持隧道运行，再用 Mac 浏览器打开完整的 `dashboard_url`。如果返回其他端口，将命令两处 18766 都替换为该端口；两端端口必须一致，因为看板会校验 HTTP Host。服务器示例别名可以叫 `server1`，这里只是占位，不包含任何真实地址或用户名。不要为此开放防火墙、绑定公网或使用公开隧道。
+
+仅需独立只读视图或多项目视图时，可手动运行前台看板；`--port 0` 避免与自动服务抢占端口：
+
+```sh
+python3 /absolute/skill/scripts/web_dashboard.py --config /absolute/project.json --port 0
+```
+
+PowerShell 用 `python`。此手动模式不启动 watcher；打开打印的实际地址，用 Ctrl+C 停止前台视图。多个项目重复传入 `--config`。
 
 想先看界面，可下载并在浏览器打开[独立演示页](../examples/dashboard-demo.html)；它只展示示例数据，不连接真实项目。
 
-看板显示已保存状态，不是进程心跳；首次没有任务是正常现象。它不启动任务、不写 GitHub、不合并代码。多个项目重复传入 `--config`。详情见 [Web 看板说明](web-dashboard.md)。
+看板显示已保存状态，不是 executor 的进程心跳。HTML 报告可直接进入隔离静态阅读器，查看任务关联、下载原文件或打开 GitHub 来源；预览禁用脚本和外部资源，不提供公开报告链接。看板不启动任务、不写 GitHub、不合并代码。详情见 [Web 看板说明](web-dashboard.md)。
 
 ## 8. 验证到哪一步
 
@@ -232,4 +231,4 @@ python3 tests/codex_host_smoke.py --codex "$(command -v codex)"
 
 原生 Windows 尚未完成实机端到端验证，不能把跨平台文件锁或 Windows 传输合同测试当作可直接生产执行的证明。可选择单一 WSL2 环境，但同样需要本机真实验证。遇到报错请保留原始错误和收据，按 [工具工作流](coordinator-tools.md) 恢复，不能用另建会话掩盖失败。
 
-安装完成后，去掉提示中的“先不要启动”限制并明确允许的任务范围，coordinator 才进入实际分配和验收流程。验收只说明隔离 worktree 中的实现通过检查；merge、push、部署和关闭 Issue 需要另行授权。
+明确授权的任务范围与回写权限后，coordinator 才能实际分配和验收。验收只说明隔离 worktree 中的实现通过检查；merge、push、部署和关闭 Issue 需要另行授权。

@@ -26,6 +26,8 @@ from issue_worktree import validate_paths, create, resume
 from mcp_executor import (execute_assignment, resume_assignment, recover_assignment,
     validated_receipt, task_identity)
 from github_source import fetch, gh
+from executor_notifications import (EVENT_STATUSES, receipt_for_job,
+    record_executor_notification, deliver_executor_notifications)
 
 
 def overlaps(a, b):
@@ -181,6 +183,7 @@ class DelegationService:
             job_id = uuid.uuid4().hex
             job = dict(id=job_id, task=task, status='reserved', assignment=assignment,
                 owned_paths=owned_paths, resources=resources, dependencies=[], created_at=time.time(),
+                coordinator_thread_id=self.owner, attempt_id=str(uuid.uuid4()),
                 receipt=str(self.root / (job_id + '.receipt.json')), config_hash=self.config_hash)
             self._admit(state, job)
             for dependency_id in depends_on:
@@ -212,18 +215,32 @@ class DelegationService:
                 owned_paths=job['owned_paths'], task_identity=task_identity(job['task']))
             job['phase'] = 'launching'
             atomic_write(self.path, json.dumps(state, ensure_ascii=False, indent=2))
-            self._launch(job, 'start')
+            self._schedule(state, job, 'start')
         except Exception as exc:
             job.update(status='preparation_failed' if job['phase'] == 'preparing' else 'recovery_required', error=str(exc))
+            record_executor_notification(state, job)
 
     @staticmethod
     def _worker_alive(job):
         return process_alive(job.get('worker_pid'))
 
-    def _launch(self, job, mode):
+    def _schedule(self, state, job, mode):
+        if job.get('coordinator_thread_id', self.owner) != self.owner:
+            raise ValueError('Executor job belongs to a different fixed coordinator')
+        job['coordinator_thread_id'] = self.owner
+        if mode == 'resume' or not job.get('attempt_id'):
+            job['attempt_id'] = str(uuid.uuid4())
+        job['executor_config']['attempt_id'] = job['attempt_id']
         job.update(status='running', mode=mode, launched_at=time.time())
+        job.pop('worker_pid', None)
+        # The attempt is durable before spawning; worker receipts cannot be
+        # mistaken for an earlier continuation after a crash.
+        atomic_write(self.path, json.dumps(state, ensure_ascii=False, indent=2))
+        self._launch(job, mode)
+
+    def _launch(self, job, mode):
         with open(self.root / (job['id'] + '.worker.log'), 'a', encoding='utf-8') as log:
-            process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), '--config', str(self.config_path), '--worker', job['id']],
+            process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), '--config', str(self.config_path), '--worker', job['id'], '--attempt', job['attempt_id']],
                 stdin=subprocess.DEVNULL, stdout=log, stderr=log, cwd=str(self.workspace),
                 env=dict(os.environ, CODEX_THREAD_ID=self.owner), **detached_process_options())
         job['worker_pid'] = process.pid
@@ -289,9 +306,10 @@ class DelegationService:
                         job.update(phase='launching', status='reserved')
                         atomic_write(self.path, json.dumps(state, ensure_ascii=False, indent=2))
                         try:
-                            self._launch(job, 'start')
+                            self._schedule(state, job, 'start')
                         except Exception as exc:
                             job.update(status='recovery_required', error=str(exc))
+                            record_executor_notification(state, job)
                     else:
                         self._prepare_and_launch(state, job, project)
                     return self._view(job)
@@ -304,7 +322,7 @@ class DelegationService:
                     raise ValueError('Original job requires recovery before continuation')
                 self._admit(state, job, True)
                 job['assignment'] = assignment
-                self._launch(job, 'recover' if recover_only else 'resume')
+                self._schedule(state, job, 'recover' if recover_only else 'resume')
             return self._view(job)
 
     def _report(self, job, summary, report):
@@ -348,13 +366,18 @@ class DelegationService:
             job.update(status='accepted' if accepted else 'rejected', finished_at=time.time(), integration='isolated_unmerged')
             return self._view(job)
 
-    def run_worker(self, job_id):
+    def run_worker(self, job_id, attempt_id=None):
         with open(self.root / (job_id + '.worker.lock'), 'a') as lock:
             acquire_lock(lock, blocking=False)
             method_started = False
+            receipt = None
             try:
                 with self.transaction() as state:
                     job = dict(self._job(state, job_id))
+                    if ((attempt_id is not None and job.get('attempt_id') != attempt_id)
+                            or job['status'] != 'running'):
+                        return  # Stale workers never execute or replace newer outcomes.
+                    attempt_id = job.get('attempt_id')
                     if job['config_hash'] != self.config_hash:
                         raise ValueError('Dispatch configuration changed')
                     if job['mode'] != 'recover':
@@ -374,18 +397,32 @@ class DelegationService:
             except Exception as exc:
                 status, error = 'recovery_required', str(exc)
                 if 'job' in locals() and Path(job['receipt']).exists():
-                    receipt = json.loads(Path(job['receipt']).read_text(encoding='utf-8'))
-                    if receipt.get('status') in {'failed', 'canceled', 'timed_out', 'checks_failed', 'verification_failed'} or (not method_started and receipt.get('status') in {'verified', 'completed'}):
-                        status = receipt['status']
+                    try:
+                        receipt = receipt_for_job(job)
+                        if receipt.get('status') in EVENT_STATUSES - {'completed', 'verified'} or (not method_started and receipt.get('status') == 'verified'):
+                            status = receipt['status']
+                    except (OSError, ValueError) as receipt_error:
+                        receipt = None
+                        error += '; ' + str(receipt_error)
                 elif 'job' in locals() and job.get('mode') == 'start' and not method_started:
                     # The worker itself proves it rejected admission before calling
                     # the bridge. No native job exists; preserve the worktree.
                     status = 'preparation_failed'
                     job['phase'] = 'worker_validation_failed'
             with self.transaction() as state:
-                self._job(state, job_id).update(status=status, error=error, observed_at=time.time())
+                current = self._job(state, job_id)
+                if current.get('attempt_id') != attempt_id:
+                    return
+                current.update(status=status, error=error, observed_at=time.time())
                 if status == 'preparation_failed':
-                    self._job(state, job_id)['phase'] = 'worker_validation_failed'
+                    current['phase'] = 'worker_validation_failed'
+                record_executor_notification(state, current, receipt)
+        # Detached workers can notify after their coordinator's MCP turn ends.
+        # Delivery failure must not overwrite the executor's actual outcome.
+        try:
+            deliver_executor_notifications(self.config_path)
+        except Exception as exc:
+            print(json.dumps({'notification_error': str(exc)}), file=sys.stderr, flush=True)
 
 
 def main():
@@ -393,8 +430,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', required=True)
     parser.add_argument('--worker', required=True)
+    parser.add_argument('--attempt')
     args = parser.parse_args()
-    DelegationService(args.config).run_worker(args.worker)
+    DelegationService(args.config).run_worker(args.worker, args.attempt)
 
 
 if __name__ == '__main__':

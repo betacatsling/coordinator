@@ -111,6 +111,12 @@ class DelegationTests(unittest.TestCase):
         self.assertEqual(self.wait(resumed)['thread_id'], receipt['thread_id'])
         result = self.service.executor_result(job['id'])['receipt']
         self.assertEqual(len(result['previous_turns']), 1)
+        self.assertNotEqual(result['attempt_id'], receipt['attempt_id'])
+        ledger = json.loads(self.service.path.read_text())
+        notices = [n for n in ledger['notifications'].values() if n['job_id'] == job['id']]
+        self.assertEqual(len(notices), 2)
+        self.assertEqual({n['attempt_id'] for n in notices}, {result['attempt_id'], receipt['attempt_id']})
+        self.assertEqual({n['executor_thread_id'] for n in notices}, {receipt['thread_id']})
         done = self.service.task_finish(job['id'], True, 'Scoped fixture accepted', 'Actual scope check passed; no integration claimed')
         self.assertEqual(done['status'], 'accepted')
         self.assertTrue(Path(done['report']['local_path']).is_file())
@@ -240,6 +246,13 @@ class DelegationTests(unittest.TestCase):
         self.assertEqual(run.returncode,0,run.stderr)
         job=json.loads(run.stdout)['result']['structuredContent']
         self.assertEqual(self.wait(job)['status'],'verified')
+        # The stdio coordinator already exited; its detached worker still
+        # persists a fixed-owner review event without requiring status polling.
+        notices = json.loads(self.service.path.read_text())['notifications']
+        event = next(n for n in notices.values() if n['job_id'] == job['id'])
+        self.assertEqual(event['coordinator_thread_id'], self.owner)
+        self.assertEqual(event['executor_status'], 'verified')
+        self.assertEqual(event['attempt_id'], job['attempt_id'])
 
     def test_inactive_stale_revision_can_be_retired_without_writeback(self):
         job=self.start();self.wait(job)

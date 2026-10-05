@@ -1,18 +1,52 @@
 # Validation — fresh-only candidate
 
-Validated in the cloud on 2026-10-05. This package supports one path: GitHub board notifications, one chosen native coordinator, and direct delegation MCP tools. It does not import or migrate previous controller state.
+Validated in the cloud on 2026-10-05. The workflow uses one chosen native coordinator, one local dashboard-and-notification service and direct delegation MCP tools.
 
 ## Tested
 
-106 tests cover fresh native-session binding, board pagination and filtering, title-only inputs, notification deduplication, six MCP tool contracts, detached workers, concurrency and ownership checks, original-session continuation/recovery, stale-version retirement, exact artifacts/patch verification, deletion-only outputs, GitHub writeback and local HTML reports. Executor/network fixtures are deterministic; real stdio subprocess boundaries and worker persistence are exercised.
+The final integrated suite ran **221 tests: 220 passed, one skipped**. The skipped exited-process probe requires a native Windows kernel. Script, test and web-file checksums were unchanged across the run. Python compilation, `scan_release.py` and `git diff --check` also passed.
 
-Run: `PROJECT_DELEGATION_TEST_NODE=python3 python3 -m unittest discover -s tests -v`
+Coverage includes native-session binding, board filtering and title-only inputs, six MCP tool contracts, detached workers, concurrency and ownership, original-session recovery, stale-result retirement, artifact/check verification, GitHub write-back fixtures, private HTML reports, isolated preview/download restrictions and dashboard startup/navigation contracts.
+
+Twelve cross-component cases exercise real durable files and locks, bootstrap binding, the watcher loop, worker outcome/notice transactions and dashboard reads. They cover silent baseline → changed board input → queue → worker completion → review by the same coordinator; repeated init/stop/restart; both-outbox deduplication; outages; lost acknowledgements; queue rejection; crash recovery; failed review; binding/configuration drift; and redacted status. Native queue, GitHub, process startup and worktree boundaries in these cases are fixtures. They do not establish live wakeup or execution.
+
+Before this integration, the recorded baseline was 170 tests: 169 passed and one skipped.
+
+Before notification integration, a separate Linux fixture smoke verified a real detached dashboard process, HTTP page serving, automatic fallback from an occupied preferred port, headless reuse and `--no-open` server startup. Browser-open deduplication and macOS/Windows desktop detection were tested with mocks; this is not native browser or native macOS/Windows validation.
+
+Cloud-side browser validation was blocked. The implementation task subsequently reported Mac-rendered screenshots, but browser exit timed out; complete browser interaction validation is not claimed. Native Windows end-to-end operation remains unverified.
+
+Run: `python3 -m unittest discover -s tests -v`
+
+MCP startup no longer requires `CODEX_THREAD_ID`. Real stdio fixture tests cover identity-free initialization/discovery, per-call host `_meta.threadId`, missing/malformed/mismatched identity rejection, configuration changes, and detached-worker identity propagation. These fixture tests cover protocol and authorization behavior; the separate installed-host check below verifies native metadata propagation.
+
+## Installed Codex host smoke test
+
+On 2026-10-05, the opt-in `python3 tests/codex_host_smoke.py` passed all five checks against installed Codex CLI 0.159.2:
+
+1. Actual host MCP initialization, tool discovery and tool call
+2. Host-generated `_meta.threadId` matches the actual ephemeral thread
+3. MCP server has no `CODEX_THREAD_ID` environment variable
+4. The bound thread successfully reads a fixture task
+5. A second actual host-created thread is rejected
+
+The harness uses temporary fixture state, a credential-free isolated `CODEX_HOME`, and the native app-server `mcpServer/tool/call` API. It requests no model turn, GitHub call or executor launch, and changes no global configuration. IDs come from `thread/start`; no identity is fabricated or inserted into MCP metadata. `environments: []` disables unrelated shell execution for these test threads. Requires an installed Codex CLI with this experimental API; use `--codex PATH` if it is not on PATH. Captured metadata remains temporary and is deleted after the run.
 
 ## Not yet verified live
 
-This fresh-only candidate has not been installed or activated on a user host. Live GitHub mutation, native desktop notification delivery and complete model-driven execution still require a controlled end-to-end run. The installed-host checks below verify MCP identity routing only. Reports are local files; hosted report links are not implemented in the new service. Accepted worktrees remain unmerged.
+The implementation task reported installing this candidate on macOS and Linux and verifying synthetic-board notifications waking the same real idle native thread on both hosts, plus Linux HTTP lifecycle and isolated HTML preview. These checks establish the observed notification/lifecycle paths; complete model-driven execution and live GitHub write-back still require separate evidence. The installed-host smoke test verifies MCP identity routing only, not model-driven coordinator or executor behavior. Reports are local files; hosted report links are not implemented in the new service. Accepted worktrees remain unmerged.
 
-Fresh initialization uses `.project-delegation/runtime`. Existing repository files, running agents and unrelated state are not deleted or terminated. Stop competing old automation explicitly before activating the new notifier.
+Fresh initialization uses `.project-delegation/runtime`. Existing repository files, running agents and unrelated state are not deleted or terminated. Stop competing automation explicitly before activating the local service.
+
+Public release verification on macOS ran 221 tests in 16.806 seconds: 220 passed and one native-Windows-kernel case was skipped. Web JavaScript syntax, release hygiene and whitespace checks passed. Only the public source checkout changed.
+
+## Additional host observations
+
+The implementation task reported 221 tests on both macOS and Linux (220 passed, one Windows-kernel skip), five credential-free native-host identity checks and synthetic idle-thread notification delivery. Private project paths, native IDs, credentials and task contents are omitted. Publishing this repository does not migrate or operate an installed service.
+
+## Earlier published verification (historical)
+
+The following records describe earlier commits, not a fresh result for every current component.
 
 Public macOS release verification: all 106 tests passed in 8.437 seconds using temporary fixtures. Release hygiene and whitespace checks passed. Only the public source checkout changed; installed skills, live project files, sessions and state were untouched.
 
