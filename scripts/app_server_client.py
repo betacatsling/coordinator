@@ -2,12 +2,105 @@
 import base64
 import hashlib
 import json
+import os
+import queue
+import threading
 from pathlib import Path
 import secrets
 import socket
 import struct
 import subprocess
 import time
+
+
+class ProxyStream:
+    """Raw byte relay through the official CLI, not a new app-server process.
+
+    CPython on native Windows has no AF_UNIX. The official proxy owns the
+    platform-specific UDS connection; this client still performs WebSocket.
+    Reader/writer threads make pipe I/O timeouts work on Windows without select.
+    """
+    def __init__(self, codex, endpoint, timeout=15):
+        self.timeout = timeout
+        self.pending = bytearray()
+        self.incoming = queue.Queue(maxsize=256)
+        self.closed = threading.Event()
+        self.process = subprocess.Popen(
+            [str(codex), 'app-server', 'proxy', '--sock', str(endpoint)],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, bufsize=0)
+        self.reader = threading.Thread(target=self._read, daemon=True)
+        self.reader.start()
+
+    def _read(self):
+        try:
+            while not self.closed.is_set():
+                part = self.process.stdout.read(65536)
+                while not self.closed.is_set():
+                    try:
+                        self.incoming.put(part, timeout=0.1)
+                        break
+                    except queue.Full:
+                        pass
+                if not part:
+                    return
+        except (OSError, ValueError):
+            if not self.closed.is_set():
+                try:
+                    self.incoming.put_nowait(b'')
+                except queue.Full:
+                    pass
+
+    def settimeout(self, timeout):
+        self.timeout = timeout
+
+    def recv(self, count):
+        if not self.pending:
+            try:
+                self.pending.extend(self.incoming.get(timeout=self.timeout))
+            except queue.Empty:
+                raise TimeoutError('Official app-server proxy timed out; verify the running shared daemon and CLI proxy support. WSL2 is an alternative when all components run in the same Linux distribution.') from None
+        result = bytes(self.pending[:count])
+        del self.pending[:count]
+        return result
+
+    def sendall(self, data):
+        done = queue.Queue(maxsize=1)
+        def write():
+            try:
+                remaining = memoryview(data)
+                while remaining:
+                    count = self.process.stdin.write(remaining)
+                    if not count:
+                        raise BrokenPipeError('Official app-server proxy closed its input')
+                    remaining = remaining[count:]
+                done.put(None)
+            except (OSError, ValueError) as error:
+                done.put(error)
+        threading.Thread(target=write, daemon=True).start()
+        try:
+            error = done.get(timeout=self.timeout)
+        except queue.Empty:
+            self.close()
+            raise TimeoutError('Official app-server proxy write timed out') from None
+        if error is not None:
+            raise RuntimeError('Official app-server proxy unavailable; verify CLI proxy support and the existing daemon') from error
+
+    def close(self):
+        if self.closed.is_set():
+            return
+        self.closed.set()
+        # Only this byte-relay child is stopped; never the shared daemon.
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=2)
+        for handle in (self.process.stdin, self.process.stdout):
+            handle.close()
+        self.reader.join(timeout=2)
 
 
 class TurnFailed(RuntimeError):
@@ -17,9 +110,32 @@ class RequestRejected(RuntimeError):
     pass
 
 class AppServer:
-    def __init__(self, endpoint, timeout=15):
-        self.socket=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
-        self.socket.settimeout(timeout);self.socket.connect(str(endpoint));self.sequence=0
+    def __init__(self, endpoint, timeout=15, *, codex='codex'):
+        if not isinstance(endpoint, (str, Path)) or not str(endpoint).strip():
+            raise ValueError('An existing official app-server socket path is required')
+        if '://' in str(endpoint) or str(endpoint).startswith('\\\\.\\pipe\\'):
+            raise ValueError('Expected a local socket path, not a URL or named pipe')
+        self.timeout = timeout
+        if os.name == 'nt':
+            self.socket = ProxyStream(codex, endpoint, timeout)
+        else:
+            if not hasattr(socket, 'AF_UNIX'):
+                raise RuntimeError('Python AF_UNIX is unavailable; run Codex, Python and this project together in WSL2')
+            self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                self.socket.settimeout(timeout)
+                self.socket.connect(str(endpoint))
+            except BaseException:
+                self.socket.close()
+                raise
+        self.sequence = 0
+        try:
+            self._initialize()
+        except BaseException:
+            self.socket.close()
+            raise
+
+    def _initialize(self):
         key=base64.b64encode(secrets.token_bytes(16)).decode()
         self.socket.sendall(('GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: '+key+'\r\nSec-WebSocket-Version: 13\r\n\r\n').encode())
         raw=b''
@@ -65,7 +181,7 @@ class AppServer:
     def request(self,method,params):
         self.sequence+=1;request_id=self.sequence
         self.send({'id':request_id,'method':method,'params':params})
-        deadline=time.monotonic()+15
+        deadline=time.monotonic()+self.timeout
         while time.monotonic()<deadline:
             value=self.receive()
             if value.get('id')==request_id:
@@ -85,10 +201,10 @@ class AppServer:
 
 
 def endpoint(codex):
-    result=subprocess.run([codex,'app-server','daemon','version'],capture_output=True,text=True,timeout=15)
+    result=subprocess.run([codex,'app-server','daemon','version'],capture_output=True,text=True,encoding='utf-8',timeout=15)
     if result.returncode:raise RuntimeError('Existing official app-server unavailable')
     value=json.loads(result.stdout)
-    if value.get('status')!='running' or not value.get('socketPath'):raise RuntimeError('No running shared app-server')
+    if not isinstance(value, dict) or value.get('status')!='running' or not isinstance(value.get('socketPath'), str) or not value['socketPath'].strip():raise RuntimeError('No running shared app-server')
     return value['socketPath']
 
 

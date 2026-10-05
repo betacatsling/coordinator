@@ -1,6 +1,7 @@
 """Shared durable state writes, independent of any input backend."""
 import os
 import tempfile
+from platform_support import sync_directory
 
 def atomic_write(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -11,6 +12,7 @@ def atomic_write(path, text):
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp, path)
+        sync_directory(path.parent)
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)

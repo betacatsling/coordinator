@@ -15,3 +15,9 @@ This fresh-only candidate has not been installed or activated on a user host. Co
 Fresh initialization uses `.project-delegation/runtime`. Existing repository files, running agents and unrelated state are not deleted or terminated. Stop competing old automation explicitly before activating the new notifier.
 
 Public macOS release verification: all 106 tests passed in 8.437 seconds using temporary fixtures. Release hygiene and whitespace checks passed. Only the public source checkout changed; installed skills, live project files, sessions and state were untouched.
+
+## Windows portability candidate — 2026-10-05
+
+Mac release verification ran 131 tests in 9.208 seconds: 130 passed and one real-Windows-kernel case was skipped. The implementation task reported the same total and skip on Linux. Coverage adds Windows lock/process/path/UTF-8 boundaries and the configured official app-server proxy byte relay, using deterministic subprocess fixtures on POSIX. Release hygiene and whitespace checks passed.
+
+Native Windows kernel/runtime integration and live Windows or WSL2 Codex end-to-end operation remain unverified. See [Windows transport requirements and evidence](references/windows-transport.md). This publication changed only the public source checkout; no personal skill installation, project configuration or service was modified.

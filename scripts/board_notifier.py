@@ -7,7 +7,6 @@ GitHub state; the native coordinator owns all delegation decisions.
 """
 import argparse
 import copy
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -20,12 +19,13 @@ from github_project_inputs import normalize_project
 from github_writeback import is_workflow_comment
 from github_source import fetch
 from state_io import atomic_write
+from platform_support import acquire_lock
 
 
 class BoardNotifier:
     def __init__(self, config_path, *, client_factory=AppServer, fetcher=fetch):
         self.config_path = Path(config_path).resolve(strict=True)
-        self.config = json.loads(self.config_path.read_text())
+        self.config = json.loads(self.config_path.read_text(encoding='utf-8'))
         self.workspace = Path(self.config['workspace']).resolve(strict=True)
         self.scope = {key: self.config[key] for key in ('repository', 'project_node_id', 'user_login')}
         self.scope['workspace'] = str(self.workspace)
@@ -41,7 +41,7 @@ class BoardNotifier:
         if 'state_directory' in self.config and Path(self.config['state_directory']).resolve() != self.folder:
             raise ValueError('State directory must be workspace/.project-delegation/runtime')
         self.folder.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.binding = json.loads((self.folder / 'binding.json').read_text())
+        self.binding = json.loads((self.folder / 'binding.json').read_text(encoding='utf-8'))
         if (self.binding.get('schema') != 1 or self.binding.get('scope') != self.scope
                 or self.binding.get('binding', {}).get('scope') != self.scope
                 or self.binding['binding'].get('transport') != 'app_server'):
@@ -51,9 +51,9 @@ class BoardNotifier:
             raise ValueError('Invalid native thread ID')
         try:
             self.notifier_lock = open(self.folder / 'notifier.lock', 'a')
-            fcntl.flock(self.notifier_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquire_lock(self.notifier_lock, blocking=False)
             self.path = self.folder / 'notifier.json'
-            self.state = json.loads(self.path.read_text()) if self.path.exists() else None
+            self.state = json.loads(self.path.read_text(encoding='utf-8')) if self.path.exists() else None
             if self.state is not None:
                 if (self.state.get('schema') != 1 or self.state.get('scope') != self.scope
                         or self.state.get('board') != self.config['board']):
@@ -80,21 +80,21 @@ class BoardNotifier:
     def save(self):
         atomic_write(self.path, json.dumps(self.state, ensure_ascii=False, indent=2) + '\n')
         os.chmod(self.path, 0o600)
-        # Persist the atomic rename as well as the file contents.
-        fd = os.open(self.folder, os.O_RDONLY)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
 
     def assert_binding(self):
-        if json.loads((self.folder / 'binding.json').read_text()) != self.binding:
+        if json.loads((self.folder / 'binding.json').read_text(encoding='utf-8')) != self.binding:
             raise ValueError('Coordinator binding changed; reconnect notifier')
         if not getattr(self, 'notifier_lock', None):
             raise ValueError('Notifier is closed')
 
     def socket_path(self):
         return self.config.get('app_server_socket') or endpoint(self.config['codex'])
+
+    def open_client(self):
+        socket_path = self.socket_path()
+        if self.client_factory is AppServer:
+            return self.client_factory(socket_path, codex=self.config['codex'])
+        return self.client_factory(socket_path)
 
     def snapshot(self, observations):
         project = self.fetcher(self.config)
@@ -116,7 +116,7 @@ class BoardNotifier:
         if baseline != 'current':
             raise ValueError('Explicit --baseline current required; historical replay is not automatic')
         identity = self.binding['binding']['provider_thread_id']
-        with self.client_factory(self.socket_path()) as client:
+        with self.open_client() as client:
             client.thread(identity, self.workspace)
         observations = {}
         tasks = self.snapshot(observations)
@@ -176,7 +176,7 @@ class BoardNotifier:
         entries = [e for e in self.state['outbox'] if e['status'] in ('prepared', 'submitting', 'queued')]
         if not entries:
             return
-        with self.client_factory(self.socket_path()) as client:
+        with self.open_client() as client:
             identity = self.state['binding']['provider_thread_id']
             client.thread(identity, self.workspace)  # active and idle both permit native queueing
             for entry in entries:

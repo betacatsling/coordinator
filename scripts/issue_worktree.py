@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Issue-specific detached worktrees; never apply patches to the dirty main tree."""
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import hashlib
 import json
 from state_io import atomic_write
 import subprocess
+from platform_support import IS_WINDOWS
 
 PROTECTED={'.git','.codex','.agents','.project-delegation','reports'}
 
@@ -13,13 +14,20 @@ def validate_paths(paths):
     if not isinstance(paths,list) or not paths:raise ValueError('An explicit per-Issue file/directory scope is required')
     for name in paths:
         if not isinstance(name,str):raise ValueError('Unsafe executor file scope')
-        p=Path(name)
-        if not name or p.is_absolute() or '..' in p.parts or p==Path('.') or any(v in PROTECTED for v in p.parts):raise ValueError('Unsafe executor file scope')
+        p=PurePosixPath(name)
+        if '\\' in name or PureWindowsPath(name).drive or ':' in name:raise ValueError('Use repository-relative forward-slash paths')
+        if IS_WINDOWS and any(v.endswith((' ', '.')) or PureWindowsPath(v).is_reserved() for v in p.parts):raise ValueError('Unsafe Windows executor file scope')
+        if not name or p.is_absolute() or '..' in p.parts or p==PurePosixPath('.') or any((v.casefold() if IS_WINDOWS else v) in PROTECTED for v in p.parts):raise ValueError('Unsafe executor file scope')
     return paths
 
 
+def within_scope(name, scope):
+    if IS_WINDOWS:name,scope=name.casefold(),scope.casefold()
+    return name==scope or name.startswith(scope.rstrip('/')+'/')
+
+
 def git(root,*argv):
-    r=subprocess.run(['git','-C',str(root),*argv],capture_output=True,text=True,timeout=30)
+    r=subprocess.run(['git','-C',str(root),*argv],capture_output=True,text=True,encoding="utf-8",timeout=30)
     if r.returncode:raise RuntimeError('Git worktree operation failed: '+r.stderr.strip())
     return r.stdout.strip()
 
@@ -30,7 +38,7 @@ def create(repo, task, state_dir, owned_paths=None):
     if owned_paths:
         validate_paths(owned_paths)
         dirty=git(repo,'diff','--name-only','HEAD').splitlines()+git(repo,'ls-files','--others','--exclude-standard').splitlines()
-        if any(any(n==p or n.startswith(p.rstrip('/')+'/') for p in owned_paths) for n in dirty):raise ValueError('Issue scope overlaps uncommitted main-workspace files; preserve them and reconcile explicitly')
+        if any(any(within_scope(n,p) for p in owned_paths) for n in dirty):raise ValueError('Issue scope overlaps uncommitted main-workspace files; preserve them and reconcile explicitly')
     root=Path(state_dir).resolve()/'worktrees';root.mkdir(parents=True,exist_ok=True)
     key=_key(task)
     target=root/key
@@ -76,7 +84,7 @@ def inspect(workspace, paths):
     validate_paths(paths);workspace=Path(workspace)
     names=git(workspace,'diff','--name-only','HEAD').splitlines()+git(workspace,'ls-files','--others').splitlines()
     for name in names:
-        if not any(name==p or name.startswith(p.rstrip('/')+'/') for p in paths):raise ValueError('Executor modified outside owned paths: '+name)
+        if not any(within_scope(name,p) for p in paths):raise ValueError('Executor modified outside owned paths: '+name)
     for name in names:
         p=workspace/name
         if p.is_symlink() or (p.exists() and workspace.resolve() not in p.resolve().parents):raise ValueError('Unsafe executor artifact')

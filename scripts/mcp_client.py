@@ -8,7 +8,7 @@ import time
 class MCP:
     def __init__(self, command, cwd, log):
         self.process = subprocess.Popen(command, cwd=str(cwd), stdin=subprocess.PIPE,
-                                        stdout=subprocess.PIPE, stderr=log, text=True, bufsize=1)
+                                        stdout=subprocess.PIPE, stderr=log, text=True, encoding="utf-8", bufsize=1)
         self.responses = queue.Queue()
         self.seq = 0
         self.lock = threading.Lock()

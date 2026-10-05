@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Bind the actual current native Codex thread to a fresh project runtime."""
 import argparse
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -9,6 +8,7 @@ import uuid
 
 from app_server_client import AppServer, endpoint
 from state_io import atomic_write
+from platform_support import acquire_lock
 
 SCOPE_KEYS = ('workspace', 'repository', 'project_node_id', 'user_login')
 
@@ -21,7 +21,7 @@ def bootstrap(config_path, *, cwd=None, environment=None, inspect=False,
     AppServer thread/read response; no caller-supplied thread override exists.
     """
     path = Path(config_path).resolve(strict=True)
-    config = json.loads(path.read_text())
+    config = json.loads(path.read_text(encoding="utf-8"))
     for key in SCOPE_KEYS:
         if not isinstance(config.get(key), str) or not config[key].strip():
             raise ValueError('Missing project scope: ' + key)
@@ -53,9 +53,9 @@ def bootstrap(config_path, *, cwd=None, environment=None, inspect=False,
     lock = None
     try:
         if not inspect:
-            lock = open(folder / 'binding.lock', 'a')
-            fcntl.flock(lock, fcntl.LOCK_EX)
-        existing = json.loads(binding_path.read_text()) if binding_path.exists() else None
+            lock = open(folder / 'binding.lock', 'a+b')
+            acquire_lock(lock)
+        existing = json.loads(binding_path.read_text(encoding="utf-8")) if binding_path.exists() else None
         if existing is not None:
             if not isinstance(existing, dict) or not isinstance(existing.get('binding'), dict):
                 raise ValueError('Invalid existing binding; refusing overwrite')
@@ -69,7 +69,8 @@ def bootstrap(config_path, *, cwd=None, environment=None, inspect=False,
             if any(p.name != 'binding.lock' for p in folder.iterdir()):
                 raise ValueError('Unbound runtime contains existing data; refusing initialization')
         socket_path = config.get('app_server_socket') or endpoint(config['codex'])
-        with client_factory(socket_path) as client:
+        with (client_factory(socket_path, codex=config['codex']) if client_factory is AppServer
+              else client_factory(socket_path)) as client:
             thread = client.thread(identity, workspace)
         # Verify explicitly even for custom fixture backends.
         if (thread.get('id') != identity or not thread.get('cwd')
@@ -82,11 +83,6 @@ def bootstrap(config_path, *, cwd=None, environment=None, inspect=False,
                 'scope': scope, 'socket_path': str(socket_path)}}
             atomic_write(binding_path, json.dumps(value, indent=2) + '\n')
             os.chmod(binding_path, 0o600)
-            fd = os.open(folder, os.O_RDONLY)
-            try:
-                os.fsync(fd)
-            finally:
-                os.close(fd)
         return {'status': 'verified' if inspect else ('reused' if existing else 'initialized'),
                 'scope': scope, 'provider_thread_id': identity,
                 'binding_path': str(binding_path)}

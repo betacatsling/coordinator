@@ -5,7 +5,6 @@ The service never interprets coordinator chat. The stdio MCP adapter is the only
 public command surface; assignments are text, never executable controller argv.
 """
 from contextlib import contextmanager
-import fcntl
 import hashlib
 import html
 import json
@@ -18,6 +17,7 @@ import threading
 import uuid
 
 from state_io import atomic_write
+from platform_support import acquire_lock, detached_process_options, process_alive
 from github_project_inputs import normalize_project
 from github_board import select_tasks, assert_claimable
 from github_writeback import (is_workflow_comment, write_claim, write_result,
@@ -29,6 +29,8 @@ from github_source import fetch, gh
 
 
 def overlaps(a, b):
+    from platform_support import IS_WINDOWS
+    if IS_WINDOWS:a,b=a.casefold(),b.casefold()
     a, b = PurePosixPath(a), PurePosixPath(b)
     return a == b or a in b.parents or b in a.parents
 
@@ -39,7 +41,7 @@ ACTIVE = {'reserved', 'running', 'recovery_required', 'waiting_for_input'}
 class DelegationService:
     def __init__(self, config_path):
         self.config_path = Path(config_path).resolve(strict=True)
-        self.config = json.loads(self.config_path.read_text())
+        self.config = json.loads(self.config_path.read_text(encoding='utf-8'))
         c = self.config
         self.workspace = Path(c['workspace']).resolve(strict=True)
         backstage = (self.workspace / '.project-delegation').resolve()
@@ -78,7 +80,7 @@ class DelegationService:
                 raise ValueError()
         except (ValueError, AttributeError):
             raise ValueError('Valid runtime CODEX_THREAD_ID required; caller cannot supply an identity')
-        state = json.loads((self.folder / 'binding.json').read_text())
+        state = json.loads((self.folder / 'binding.json').read_text(encoding='utf-8'))
         if state.get('schema') != 1:
             raise ValueError('Unknown coordinator binding schema')
         if state.get('binding', {}).get('transport') != 'app_server' or state.get('binding', {}).get('provider_thread_id') != self.owner:
@@ -91,8 +93,8 @@ class DelegationService:
     def transaction(self):
         self._authorize()
         with open(self.root / 'jobs.lock', 'a') as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            state = json.loads(self.path.read_text()) if self.path.exists() else {'scope': self.scope, 'jobs': {}, 'observations': {}}
+            acquire_lock(lock)
+            state = json.loads(self.path.read_text(encoding='utf-8')) if self.path.exists() else {'scope': self.scope, 'jobs': {}, 'observations': {}}
             if state.get('scope') != self.scope:
                 raise ValueError('Durable job ledger scope changed')
             yield state
@@ -138,7 +140,7 @@ class DelegationService:
         result = {k: v for k, v in job.items() if k not in {'executor_config', 'assignment', 'dependencies'}}
         path = Path(job['receipt'])
         if path.exists():
-            receipt = json.loads(path.read_text())
+            receipt = json.loads(path.read_text(encoding='utf-8'))
             result['executor_status'] = receipt.get('status')
             result['thread_id'] = receipt.get('thread_id')
             result['executor_error'] = receipt.get('error')
@@ -213,21 +215,13 @@ class DelegationService:
 
     @staticmethod
     def _worker_alive(job):
-        if not job.get('worker_pid'):
-            return False
-        try:
-            os.kill(job['worker_pid'], 0)
-            return True
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
+        return process_alive(job.get('worker_pid'))
 
     def _launch(self, job, mode):
         job.update(status='running', mode=mode, launched_at=time.time())
-        with open(self.root / (job['id'] + '.worker.log'), 'a') as log:
+        with open(self.root / (job['id'] + '.worker.log'), 'a', encoding='utf-8') as log:
             process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), '--config', str(self.config_path), '--worker', job['id']],
-                stdin=subprocess.DEVNULL, stdout=log, stderr=log, cwd=str(self.workspace), start_new_session=True, close_fds=True)
+                stdin=subprocess.DEVNULL, stdout=log, stderr=log, cwd=str(self.workspace), **detached_process_options())
         job['worker_pid'] = process.pid
         # Reap while the stdio server lives; daemonization keeps workers independent
         # when the coordinator closes its MCP connection.
@@ -241,7 +235,7 @@ class DelegationService:
         with self.transaction() as state:
             job = self._job(state, job_id)
             path = Path(job['receipt'])
-            return dict(job=self._view(job), receipt=json.loads(path.read_text()) if path.exists() else None)
+            return dict(job=self._view(job), receipt=json.loads(path.read_text(encoding='utf-8')) if path.exists() else None)
 
     def _check_dependencies(self, state, job):
         if not job['dependencies']:
@@ -269,7 +263,7 @@ class DelegationService:
             lock_path = self.root / (job_id + '.worker.lock')
             with open(lock_path, 'a') as lock:
                 try:
-                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    acquire_lock(lock, blocking=False)
                 except BlockingIOError:
                     raise ValueError('Original executor worker is still active')
                 if not Path(job['receipt']).exists() or 'executor_config' not in job:
@@ -300,7 +294,7 @@ class DelegationService:
                 if not recover_only:
                     self._current(state, job['task'])
                     self._check_dependencies(state, job)
-                receipt = json.loads(Path(job['receipt']).read_text())
+                receipt = json.loads(Path(job['receipt']).read_text(encoding='utf-8'))
                 resume(self.workspace, job['task'], self.root, job['owned_paths'], receipt)
                 if not recover_only and (not receipt.get('thread_id') or receipt.get('status') not in {'verified', 'checks_failed', 'verification_failed', 'failed', 'canceled', 'timed_out', 'completed'}):
                     raise ValueError('Original job requires recovery before continuation')
@@ -340,7 +334,7 @@ class DelegationService:
                 return self._view(job)
             if accepted:
                 self._check_dependencies(state, job)
-                resume(self.workspace, job['task'], self.root, job['owned_paths'], json.loads(Path(job['receipt']).read_text()))
+                resume(self.workspace, job['task'], self.root, job['owned_paths'], json.loads(Path(job['receipt']).read_text(encoding='utf-8')))
                 validated_receipt(job['executor_config'], job['receipt'])
             job['report'] = self._report(job, summary, report)
             job['decision'] = decision
@@ -352,7 +346,7 @@ class DelegationService:
 
     def run_worker(self, job_id):
         with open(self.root / (job_id + '.worker.lock'), 'a') as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquire_lock(lock, blocking=False)
             method_started = False
             try:
                 with self.transaction() as state:
@@ -376,7 +370,7 @@ class DelegationService:
             except Exception as exc:
                 status, error = 'recovery_required', str(exc)
                 if 'job' in locals() and Path(job['receipt']).exists():
-                    receipt = json.loads(Path(job['receipt']).read_text())
+                    receipt = json.loads(Path(job['receipt']).read_text(encoding='utf-8'))
                     if receipt.get('status') in {'failed', 'canceled', 'timed_out', 'checks_failed', 'verification_failed'} or (not method_started and receipt.get('status') in {'verified', 'completed'}):
                         status = receipt['status']
                 elif 'job' in locals() and job.get('mode') == 'start' and not method_started:

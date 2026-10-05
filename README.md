@@ -8,11 +8,11 @@ Tell your chosen session: **Be this project's coordinator** or **你作为这个
 
 With a reviewed project configuration, it verifies the actual runtime `CODEX_THREAD_ID` against the native AppServer thread identity and workspace, then initializes a fresh binding. The coordinator makes planning, dispatch and acceptance decisions directly through tools. An optional board watcher only notifies it about changed inputs.
 
-This is experimental, fresh-only code. There is no state conversion, ownership transfer or compatibility mode. It uses `.project-delegation/runtime` and preserves existing files elsewhere. Nothing automatically installs tools, starts or terminates processes, or changes a live project configuration.
+This is experimental, fresh-only code. There is no state conversion, ownership transfer or compatibility mode. It uses `.project-delegation/runtime` and preserves existing files elsewhere. Nothing automatically installs tools, starts a new shared app-server or changes a live project configuration. Requested connections on Windows start and clean up their own official byte-relay child.
 
 ## Setup
 
-Use macOS or Linux, Python 3.9+, Node.js, authenticated Codex and GitHub CLIs, and separately installed [mcp-agents](https://github.com/thomaswitt/mcp-agents). The chosen coordinator must be loaded in a supported shared native Codex AppServer.
+Use macOS, Linux or the native Windows portability candidate, Python 3.9+, Node.js, authenticated Codex and GitHub CLIs, and separately installed [mcp-agents](https://github.com/thomaswitt/mcp-agents). The chosen coordinator must be loaded in a supported shared native Codex AppServer.
 
 1. Review [the example configuration](assets/fresh-config.example.json), fill in the selected repository, Project, authorized user and exact board mappings, and review executor and write-back permissions
 2. From the selected workspace, run `python3 /absolute/skill/scripts/coordinator_bootstrap.py --config /absolute/config.json init`
@@ -21,6 +21,8 @@ Use macOS or Linux, Python 3.9+, Node.js, authenticated Codex and GitHub CLIs, a
 5. Optionally initialize the watcher with `board_notifier.py --config /absolute/config.json init --baseline current`, then run its `watch` command
 
 The example deliberately disables write-back. Live GitHub execution requires authorized live claim writes and verified board mappings; turn those on only after review. Copying this skill does not register MCP tools or refresh an already running client.
+
+Windows uses the configured `codex.exe` and official `app-server proxy` to reach the existing daemon. See [Windows prerequisites, WSL2 alternative and validation boundary](references/windows-transport.md). Linux-hosted contract tests pass; native Windows and WSL2 live end-to-end operation have not been verified.
 
 ## Work and acceptance
 
