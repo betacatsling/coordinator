@@ -107,7 +107,19 @@ def bootstrap(cwd=None,home=None,environment=None,explicit=None,inspect=False):
     except OSError:return dict(out,status='blocked',reason='Cannot inspect existing owner lock; preserve current owner')
     out.update(provider_thread_id=thread,previous_provider_thread_id=old,owner_present=present)
     if old==thread and binding.get('transport')=='app_server':
-        return dict(out,status='active',action='reuse_existing_owner',activation_performed=False)
+        if present:return dict(out,status='active',action='reuse_existing_owner',activation_performed=False)
+        result=dict(out,status='blocked',action='restore_existing_controller',activation_performed=False,
+                    reason='The saved coordinator binding has no running controller')
+        if inspect or not c.get('auto_start_controller',False):return result
+        try:
+            from app_server_client import AppServer
+            with AppServer(binding['socket_path']) as client:client.thread(thread,workspace)
+            with open(folder/'controller.log','a') as output:
+                process=subprocess.Popen([sys.executable,str(Path(__file__).with_name('project_acpx.py')),'--config',str(found['config_path']),'run'],cwd=str(workspace),stdin=subprocess.DEVNULL,stdout=output,stderr=output,start_new_session=True)
+            result.update(status='pending',action='controller_started_activation_pending',controller_pid=process.pid)
+            result.pop('reason',None)
+        except (OSError,ValueError,RuntimeError,KeyError) as exc:result['reason']=str(exc)
+        return result
     if old==thread:
         ledger=Path(c.get('provider_ledger',str(folder/'provider.json'))).resolve()
         if backstage not in ledger.parents:return dict(out,status='blocked',reason='Provider ledger leaves project scope')

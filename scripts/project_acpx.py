@@ -76,6 +76,8 @@ class Coordinator:
     def __init__(self, config_path):
         self.config_path=config_path
         self.config=json.loads(config_path.read_text());c=self.config
+        if c.get('delegation',{}).get('enabled') is True:
+            raise ValueError('Coordinator-tool mode is enabled; use board_notifier and delegation_mcp instead of the legacy dispatcher')
         if c.get('source',{}).get('type')=='github' and not c.get('board') and c.get('intake_mode')!='project':
             raise ValueError('GitHub board mapping required; legacy whole-project intake needs intake_mode=project')
         self.workspace=Path(c['workspace']).resolve(strict=True)
@@ -191,6 +193,18 @@ class Coordinator:
         except (OSError,ValueError,RuntimeError,KeyError) as exc:
             self.state['binding_error']=str(exc);self.save();return False
 
+    def submit_prepared(self,client,binding,pending):
+        """Only prepared requests are known not sent; never resend uncertain delivery."""
+        from app_server_client import RequestRejected,TurnFailed
+        if pending['status']!='prepared':return
+        pending['status']='submitting';self.save()
+        try:
+            result=client.request('thread/queue/add',{'threadId':binding['provider_thread_id'],'clientUserMessageId':pending['id'],'input':[{'type':'text','text':pending['text'],'text_elements':[]}]})
+        except RequestRejected as exc:
+            # A matching RPC rejection is definitive. Transport failures remain uncertain.
+            raise TurnFailed('Coordinator queue submission rejected: '+str(exc)) from exc
+        pending.update(status='queued',queue_id=result['queuedSubmission']['id']);self.save()
+
     def queue_coordinate(self,prompt):
         from app_server_client import AppServer,turn_result,TurnFailed
         binding=self.state['binding'];pending=self.state.get('coordinator_request')
@@ -208,11 +222,7 @@ class Coordinator:
         try:
             with AppServer(binding['socket_path']) as client:
                 client.thread(binding['provider_thread_id'],self.workspace)
-                if pending['status']=='prepared':
-                    # Save before sending: a lost response must be reconciled, never blindly resent.
-                    pending['status']='submitting';self.save()
-                    result=client.request('thread/queue/add',{'threadId':binding['provider_thread_id'],'clientUserMessageId':pending['id'],'input':[{'type':'text','text':pending['text'],'text_elements':[]}]})
-                    pending.update(status='queued',queue_id=result['queuedSubmission']['id']);self.save()
+                self.submit_prepared(client,binding,pending)
                 deadline=time.monotonic()+self.config.get('timeout',120)
                 while time.monotonic()<deadline:
                     value=turn_result(client.thread(binding['provider_thread_id'],self.workspace,True),pending['text'])
@@ -234,8 +244,13 @@ class Coordinator:
             binding=self.state['binding']
             try:
                 with AppServer(binding['socket_path']) as client:
+                    client.thread(binding['provider_thread_id'],self.workspace)
+                    self.submit_prepared(client,binding,pending)
                     result=turn_result(client.thread(binding['provider_thread_id'],self.workspace,True),pending['text'])
-                if result is None:return
+                self.state['coordination_error']=None
+                if result is None:
+                    if pending['status']=='submitting':self.state['coordination_error']='Queue delivery is uncertain; awaiting original turn or explicit reconciliation; not resubmitting'
+                    self.save();return
                 key=pending.get('key',pending['digest'])
                 self.state.setdefault('coordinator_results',{})[key]={'result':result,'id':pending['id'],'digest':pending['digest']}
                 self.state.pop('coordinator_request');self.save()
@@ -262,10 +277,27 @@ class Coordinator:
             from github_board import select_tasks
             tasks=select_tasks(project,self.config,tasks,self.state.setdefault('board_observations',{}))
         key=lambda t:t.get('dispatch_key',t['revision_hash'])
+        if self.state.get('input_revision_schema',1)<2:
+            # Titles were previously absent from the revision. Baseline the new
+            # title once only for an unchanged, already-known legacy snapshot in
+            # the same ready generation. Never rewrite execution/receipt identity.
+            legacy=normalize_project(project,self.config['project_node_id'],self.config['user_login'],self.state['result_comment_ids'],self.config['repository'],include_titles=False)
+            legacy_hashes={t['issue_id']:t['revision_hash'] for t in legacy}
+            current_tasks={t['issue_id']:t for t in tasks}
+            for entry in self.state['queue']:
+                old=entry['task'];new=current_tasks.get(old['issue_id'])
+                if (entry['status'] in {'baseline','completed','blocked'} and new
+                        and old['revision_hash']==legacy_hashes.get(old['issue_id'])
+                        and old.get('ready_generation')==new.get('ready_generation')):
+                    entry['title_revision_baseline']={'revision_hash':new['revision_hash'],
+                                                     'dispatch_key':key(new)}
+            self.state['input_revision_schema']=2
         current={t['issue_id']:key(t) for t in tasks}
         for entry in self.state['queue']:
             if entry['status']=='pending' and not entry.get('claim') and current.get(entry['task']['issue_id'])!=key(entry['task']):entry['status']='superseded'
         known={(e['task']['issue_id'],key(e['task'])) for e in self.state['queue'] if e['status']!='superseded'}
+        known.update((e['task']['issue_id'],e['title_revision_baseline']['dispatch_key'])
+                     for e in self.state['queue'] if e['status']!='superseded' and e.get('title_revision_baseline'))
         for task in tasks:
             if (task['issue_id'],key(task)) not in known:self.state['queue'].append({'task':task,'status':'pending','queued_at':time.time()})
         self.state['source_error']=None;self.save()
@@ -447,9 +479,24 @@ class Coordinator:
                 entry['executor_notice']=notice;self.save()
             except Exception as exc:entry['executor_notice_error']=str(exc);self.save()
 
+    def verify_for_admission(self):
+        """Keep native transport outages from killing the sole polling controller."""
+        if self.state.get('binding',{}).get('transport')!='app_server':
+            self.verify();return True
+        if time.monotonic()<getattr(self,'_transport_retry_at',0):return False
+        try:self.verify()
+        except (OSError,RuntimeError) as exc:
+            delay=min(60,max(10,getattr(self,'_transport_retry_delay',5)*2))
+            self._transport_retry_delay=delay;self._transport_retry_at=time.monotonic()+delay
+            self.state['transport_error']=str(exc);self.save();return False
+        self._transport_retry_delay=5;self._transport_retry_at=0
+        if self.state.get('transport_error'):
+            self.state['transport_error']=None;self.save()
+        return True
+
     def admit(self,index):
         # Only one genuinely selected slot is claimed; scan/queue insertion never posts.
-        self.verify()
+        if not self.verify_for_admission():return False
         entry=self.state['queue'][index]
         if entry['status']!='pending':raise ValueError('Only pending tasks can be admitted')
         entry.update(status='running',started_at=time.time());self.save()
@@ -488,7 +535,7 @@ class Coordinator:
                 except ProcessLookupError:pass
                 else:raise RuntimeError('Legacy watcher is alive (PID '+str(pid)+'); refuse competing input ownership. Settle its pending work and stop only that watcher explicitly before switching.')
         self.apply_binding_request()
-        self.verify()
+        self.verify_for_admission()
         # An interrupted request may already have executed. Never automatically replay it.
         for entry in self.state['queue']:
             if entry['status']=='running':entry.update(status='blocked',recovery_required=True,error='Interrupted controller; inspect original fixed session before explicit reconciliation')
@@ -498,6 +545,7 @@ class Coordinator:
             if time.monotonic()>=next_poll:
                 self.recover_queued_coordination()
                 self.apply_binding_request()
+                if self.state.get('transport_error'):self.verify_for_admission()
                 try:self.scan()
                 except Exception as exc:self.state['source_error']=str(exc);self.save()
                 next_poll=time.monotonic()+max(10,self.config.get('poll_seconds',15))

@@ -74,7 +74,20 @@ def validated_receipt(config, receipt_path):
     workspace,root,paths=_validate(config)
     receipt=_bound_receipt(config,Path(receipt_path),workspace,root,paths)
     if receipt.get('status')!='verified':raise ValueError('Receipt has no verified result')
-    if not receipt.get('artifacts'):raise ValueError('No verified artifacts')
+    if config.get('isolate_worktree'):
+        from issue_worktree import inspect, git
+        if git(workspace, 'rev-parse', 'HEAD') != config['base_head']:
+            raise ValueError('Executor worktree HEAD changed after verification')
+        current = inspect(workspace, paths)
+        if current != receipt.get('changed_paths') or git(workspace, 'diff', 'HEAD') != receipt.get('patch'):
+            raise ValueError('Executor change manifest changed after verification')
+        actual_files = {name for name in current if (workspace / name).is_file()}
+        if actual_files != set(receipt.get('artifacts', {})):
+            raise ValueError('Executor artifact manifest changed after verification')
+        if not current:
+            raise ValueError('No verified changes')
+    elif not receipt.get('artifacts'):
+        raise ValueError('No verified artifacts')
     for name,evidence in receipt['artifacts'].items():
         path=(workspace/name).resolve(strict=True)
         if workspace not in path.parents or hashlib.sha256(path.read_bytes()).hexdigest()!=evidence.get('sha256'):

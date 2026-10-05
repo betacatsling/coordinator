@@ -158,7 +158,8 @@ class BootstrapTests(unittest.TestCase):
         text = (skill / 'SKILL.md').read_text()
         description = text.split('---', 2)[1]
         self.assertIn('你作为这个项目的 coordinator', description)
-        for rule in ('default three', 'claim', 'HTML', 'dependencies', 'CODEX_THREAD_ID'):
+        for rule in ('tasks_list', 'executor_start', 'executor_status', 'executor_result',
+                     'executor_continue', 'task_finish', 'dependencies', 'watcher only'):
             self.assertIn(rule, text)
         procedure = (skill / 'references/manual-coordinator.md').read_text()
         self.assertIn('needs_selection', procedure)

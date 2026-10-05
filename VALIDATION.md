@@ -1,5 +1,16 @@
 # Release validation
 
+## Coordinator-controlled MCP candidate — 2026-10-05
+
+- The chosen coordinator calls six MCP tools directly. The new board notifier only queues notifications; it never plans or dispatches executors.
+- 174 offline tests passed using the portable renderer fixture, including 15 delegation integration cases and 19 notifier cases. Real stdio JSON-RPC and detached worker survival are exercised with deterministic executor fixtures, not live model execution.
+- Coverage includes fixed-owner scope, shared/exclusive process locks, original-session continuation, pre-launch recovery, stale-input retirement, exact artifact/patch validation, deletion-only changes, workflow-comment filtering, notification deduplication and uncertain delivery handling.
+- Release hygiene scan and whitespace checks pass. HTML reports in this mode are local-only; no hosted reader access is established. Accepted worktrees remain unmerged.
+- This candidate has not been installed or activated on a user host. Real Codex MCP environment identity propagation, GitHub mutation, desktop notification delivery and end-to-end production execution require a separate controlled rollout after existing jobs settle.
+- Historical controller tests below do not establish live validation of this new mode. Preserve existing state, sessions and artifacts during migration; do not start the old dispatcher alongside coordinator-tool mode.
+
+Public release verification on macOS: all 174 tests passed in 41.494 seconds after canonicalizing temporary fixture paths (`/var` and `/private/var` refer to the same filesystem location). Only test paths changed; implementation and assertions were preserved. Release hygiene and whitespace checks passed. No installed skill, production configuration or running task was modified by this publication.
+
 ## Current verification boundary
 
 This document records historical observations as well as release tests; dated counts below are not a fresh validation result for every later change. The current documentation uses one default workflow: current-session coordinator, configured GitHub board, independent persistent executors and verified result publication.

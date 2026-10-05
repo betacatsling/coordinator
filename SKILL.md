@@ -1,36 +1,31 @@
 ---
 name: project-delegation
-description: Use when the user asks you to be the current project's coordinator (你作为这个项目的 coordinator), coordinate GitHub board tasks, or delegate project work to parallel persistent Codex executors. Resolve the project and current session, preserve existing ownership, plan independent work and verify results.
+description: Coordinate a project's GitHub board from the user's chosen Codex session and delegate work to independent persistent Codex executors. Use when the user says “你作为这个项目的 coordinator”, asks this session to coordinate a project, or asks it to dispatch, monitor, resume or accept project tasks.
 ---
 
 # Project delegation
 
-## Start with the current session
+## Use the chosen session as coordinator
 
-Treat “你作为这个项目的 coordinator” as the entry request. Resolve the actual current workspace, Git repository, existing project binding and runtime `CODEX_THREAD_ID` session identity; do not ask the user to supply commands or invent session IDs. Run the installed `scripts/coordinator_bootstrap.py` in that workspace and follow [current-session binding](references/manual-coordinator.md).
+Treat “你作为这个项目的 coordinator” as the entry request. Resolve the current workspace, repository, configured GitHub Project and real runtime session identity. Keep the user's chosen native Codex session as the coordinator across turns. Reuse its binding; ask only for genuinely missing configuration or an ownership decision.
 
-Reuse an active owner or existing pending registration. Resolve only genuine configuration ambiguity with the user. Pending registration is not activation: let the supported controller transport establish readiness and ownership before dispatch. Never prompt the current session through legacy ACP while its registration turn is active. Never create a replacement coordinator or take over a busy owner to make activation appear successful. A role request does not itself authorize selecting or launching unrelated tasks.
+Act as the project manager: read Issues, comments, repository code, linked artifacts and available tools; decide how to split work, what can run in parallel and what evidence is needed. Make these decisions in this conversation and call the delegation MCP tools directly. Do not emit machine-plan JSON for a watcher to interpret. A watcher only reports changes or wakes this session; it does not plan, dispatch or accept work.
 
-## Coordinate the selected GitHub board
+Read [coordinator tools](references/coordinator-tools.md) for the installed tool contract and setup/migration checks. Check actual availability before using this mode. A source checkout, pending binding or offline test does not establish a live MCP connection or an active watcher.
 
-Use the selected GitHub Project/repository and its configured board as the default task source. Follow [configuration and execution](references/github-acpx.md) for the verified view, status/type mappings, executor settings and write-back protocol. Read current Issue bodies and authorized user comments, including relevant linked document snapshots. Do not require a separate PROJECT.md.
+## Run the project
 
-1. Admit only eligible current task versions. Respect the configured ready state and excluded task types; labels alone are not a gate. Polling or queueing is not a claim. Recheck scope, revision and eligibility before admission and write-back.
-2. Plan independently verifiable tasks with explicit owned paths, dependencies, approved shared resources and acceptance checks. Keep coordinator planning and acceptance serialized. Use one independent persistent Codex executor per task, default three parallel slots; configure a different limit when needed. Executors do not recursively delegate or share a global task session.
-3. Wait on unsatisfied dependencies and overlapping file/resource leases. Reconcile changed task versions and stale results before continuing. Preserve dirty work; use detached worktrees or explicitly nonoverlapping ownership. A file ownership policy is not an operating-system sandbox.
-4. Post one retry-safe claim only for an actually admitted slot and update the configured in-progress status. Append the real executor ID to that same claim when available. Resume follow-ups in the task's original session/workspace; never silently replace a failed or interrupted executor.
-5. Inspect actual artifacts and observed checks before accepting. Distinguish coordination, static validation, behavioral tests and domain conclusions. Re-read current inputs before publishing; do not overwrite newer human decisions or mark an isolated unmerged patch fully done.
-6. Publish a concise result comment and HTML report through the configured renderer. Use only verified private report links and check reader access; otherwise state that only a local report exists. Exclude own claim/result comments and reports from new task input.
+1. **Understand current work.** Use `tasks_list` and read the current task sources and artifacts. Start with the configured board and authorized scope. Reconcile existing tasks before launching more; determine whether changed inputs invalidate a plan or result.
+2. **Choose a useful split.** Give each executor a clear outcome, owned paths, dependencies, relevant context and acceptance checks. Parallelize independent work within the configured capacity. Wait on shared resources or overlapping edits, and preserve dirty project work.
+3. **Dispatch directly.** Use `executor_start` for each admitted task. Each task gets its own persistent Codex session and receipt. Let the MCP implementation enforce eligibility, leases, capacity and retry-safe records; use its actual response to distinguish waiting, admitted and running work.
+4. **Stay responsible for progress.** Use `executor_status` for progress and `executor_result` for actual output and artifacts. Investigate stalls or failed checks. Use `executor_continue` for corrections or follow-ups in the original task session and workspace. Keep independent work moving while a task waits for evidence or a user decision.
+5. **Accept the delivered outcome.** Inspect the changes and observed checks against the task's current requirements. Run or request missing checks. An executor reporting “done” means its turn ended, not that the project task is complete. A patch remaining only in an isolated worktree still needs integration; preserve that distinction in the outcome recorded through `task_finish`.
+6. **Report what matters.** Tell the user what changed, what was verified, where the artifacts are, and what remains blocked or needs a decision. Publish only the configured, authorized write-back. Treat local reports as local until the user's access to a private link is verified.
 
-## Respect boundaries
+Keep working through corrections and acceptance within the user's scope. Do not automatically merge, push or close an Issue to make a task look finished. Explain an unavailable tool, unsupported recovery or missing permission with its concrete impact rather than replacing the chosen coordinator or silently creating a duplicate executor.
 
-Keep the selected repository, Project, authorized user and configured permissions fixed. Missing MCP access, unsupported session recovery, incomplete GitHub pagination, invalid mappings or unsafe approvals block the affected operation. Use actual tool schemas and configured runtimes; do not invent success, copy credentials, broaden permissions or auto-approve unsafe actions.
+## Setup and compatibility
 
-Do not stop other owners, migrate live watchers, merge, push, close Issues or start persistent report services without the required authorization. Keep queue, baseline, deduplication records and task/session receipts across safe handoffs. Installation does not activate a controller or change production configuration.
+Normal coordination begins after the required project binding and delegation tools are available. Installing this skill does not register MCP tools, restart a session, activate a watcher or switch a production controller.
 
-## References
-
-- [Current-session binding](references/manual-coordinator.md): discovery, pending enrollment, verification and owner handoff
-- [GitHub workflow](references/github-acpx.md): board configuration, execution, claims, results and private reports
-- [Legacy document watcher/hooks](references/file-watch.md): use only when explicitly selected; do not combine with the default input owner
-- [Validation](VALIDATION.md): observed test coverage and unverified end-to-end behavior
+For a new setup or migration, use [coordinator tools](references/coordinator-tools.md). Preserve active legacy work and its receipts until settled; changing the configured coordination mode is a separate explicit step. Read [current-session binding](references/manual-coordinator.md) and [GitHub configuration](references/github-acpx.md) only when resolving existing setup or compatibility behavior. Use [document watching](references/file-watch.md) only when explicitly selected. Check [validation evidence](VALIDATION.md) for what has actually been tested.
