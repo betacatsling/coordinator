@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import time
 import uuid
-from watch_project import atomic_write
+from state_io import atomic_write
 
 
 def enroll(config_path, environment=None, cwd=None):

@@ -1,7 +1,5 @@
-# GitHub input mode
+# GitHub input
 
-See [github-acpx.md](github-acpx.md) for commands, binding, dry-run writeback, verified private report access and per-Issue detached worktrees. The example leaves writeback and executors disabled, with dry-run enabled.
+The default is the selected GitHub board, with verified ready/type mappings and the current session as coordinator. See [configuration and execution](github-acpx.md) and [current-session binding](manual-coordinator.md).
 
-The generic examples do not activate production. Optional serve_reports.py and SSH reader access require operator configuration and authorization, as does explicit safe handoff from a live legacy watcher. No ready public report URL is supplied. A local path or controller-only verified URL does not prove reader access.
-
-Do not confuse detection or completion of a coordinator turn with completion of an Issue. Reports and comments distinguish coordination guidance, static checks and behavioral evidence. Legacy local-file and native-hook workflows remain optional.
+The generic example is inert: executors and write-back are disabled, and dry-run is enabled. Complete scope, permissions and activation before live work. Validation evidence belongs in [VALIDATION.md](../VALIDATION.md); local reports, successful coordinator turns and pending enrollment do not establish accessible reports, finished tasks or active ownership.

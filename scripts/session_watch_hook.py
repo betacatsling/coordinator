@@ -22,6 +22,9 @@ if not session or event not in {'SessionStart', 'SessionEnd'}:
 folder = project / '.project-delegation'
 folder.mkdir(exist_ok=True)
 stop = folder / ('stop-' + hashlib.sha256(session.encode()).hexdigest())
+# A configured GitHub workflow never re-enters the legacy document watcher.
+if (folder/'github-acpx/state.json').exists() or (folder/'github-acpx/config.json').exists():
+    sys.exit(0)
 if event == 'SessionEnd':
     # A session can only request shutdown of a watcher it started.
     stop.write_text('SessionEnd\n')

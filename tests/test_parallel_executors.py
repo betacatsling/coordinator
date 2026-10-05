@@ -21,10 +21,13 @@ class ParallelTests(unittest.TestCase):
         g.release('A');self.assertTrue(g.try_acquire('B',['b'],['gpu0']))
     def test_dependencies_and_resources_release_only_when_satisfied(self):
         obj=Coordinator.__new__(Coordinator);obj.scope_gate=ScopeGate();obj.scope_gate.try_acquire('held',['owned'])
-        waiting={'task':{'issue_id':'B'},'status':'waiting_dependencies','depends_on':['A']}
-        files={'task':{'issue_id':'C'},'status':'waiting_resources','prepared_plan':{'owned_paths':['owned'],'resources':[]}}
-        obj.state={'queue':[{'task':{'issue_id':'A'},'status':'completed','acceptance':{'accepted':False}},waiting,files]};obj.release_waiting();self.assertEqual(waiting['status'],'waiting_dependencies');self.assertEqual(files['status'],'waiting_resources')
-        obj.state['queue'][0]['acceptance']['accepted']=True;obj.scope_gate.release('held');obj.release_waiting();self.assertEqual(waiting['status'],'pending');self.assertEqual(files['status'],'pending')
+        with tempfile.TemporaryDirectory() as tmp:
+            receipt=Path(tmp)/'upstream.json';receipt.write_text(json.dumps({'status':'verified','artifacts':{'a':{'content':'actual'}}}))
+            waiting={'task':{'issue_id':'B','revision_hash':'b'},'status':'waiting_dependencies','depends_on':['A']}
+            files={'task':{'issue_id':'C','revision_hash':'c'},'status':'waiting_resources','prepared_plan':{'owned_paths':['owned'],'resources':[]}}
+            obj.state={'queue':[{'task':{'issue_id':'A','revision_hash':'a'},'status':'completed','acceptance':{'accepted':False},'executor_receipt':str(receipt)},waiting,files]}
+            obj.release_waiting();self.assertEqual(waiting['status'],'waiting_dependencies');self.assertEqual(files['status'],'waiting_resources')
+            obj.state['queue'][0]['acceptance']['accepted']=True;obj.scope_gate.release('held');obj.release_waiting();self.assertEqual(waiting['status'],'pending');self.assertEqual(files['status'],'pending')
     def test_executor_session_updates_existing_claim_once(self):
         f=fixtures.BackendTests();f.setUp();write_claim(f.c,f.task,f.project,f.gh,False)
         thread=str(uuid.UUID(int=1))

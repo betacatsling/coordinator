@@ -8,7 +8,8 @@ from pathlib import Path
 import sys
 import time
 
-from watch_project import atomic_write, read_input, task_changes
+from state_io import atomic_write
+from watch_project import read_input, task_changes
 
 EVENTS = {'PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop'}
 

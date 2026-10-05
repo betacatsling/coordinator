@@ -11,7 +11,7 @@ import shlex
 import subprocess
 import sys
 import time
-from watch_project import atomic_write
+from state_io import atomic_write
 
 
 def private_write(path, text):

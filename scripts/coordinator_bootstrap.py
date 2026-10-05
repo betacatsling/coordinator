@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 from urllib.parse import urlsplit
 import uuid
 from register_coordinator import enroll
@@ -105,6 +106,8 @@ def bootstrap(cwd=None,home=None,environment=None,explicit=None,inspect=False):
     try:present=owner_present(backstage/'github-acpx')
     except OSError:return dict(out,status='blocked',reason='Cannot inspect existing owner lock; preserve current owner')
     out.update(provider_thread_id=thread,previous_provider_thread_id=old,owner_present=present)
+    if old==thread and binding.get('transport')=='app_server':
+        return dict(out,status='active',action='reuse_existing_owner',activation_performed=False)
     if old==thread:
         ledger=Path(c.get('provider_ledger',str(folder/'provider.json'))).resolve()
         if backstage not in ledger.parents:return dict(out,status='blocked',reason='Provider ledger leaves project scope')
@@ -112,18 +115,41 @@ def bootstrap(cwd=None,home=None,environment=None,explicit=None,inspect=False):
         except (OSError,ValueError,AttributeError):provider=None
         if provider!=thread:return dict(out,status='blocked',reason='Existing binding/ledger disagree; never replace it automatically')
         return dict(out,status='active',action='reuse_existing_owner',activation_performed=False)
+    def request_handoff(path, receipt):
+        result=dict(out,status='pending',registration=str(path),registration_status=receipt['status'],
+                    action='finish_current_turn_then_supported_handoff',first_owner=not bool(old),activation_performed=False)
+        if c.get('coordinator_transport')=='app_server' and not inspect:
+            try:
+                from app_server_client import register_request
+                job,value=register_request(found['config_path'],path,receipt,old)
+                result.update(handoff_request=str(job),handoff_status=value['status'],action='single_controller_will_apply_binding')
+                if not present:
+                    if not c.get('auto_start_controller',False):
+                        result.update(status='blocked',reason='No controller is running; configure its supervisor or explicitly enable auto_start_controller')
+                    else:
+                        log=folder/'controller.log'
+                        with open(log,'a') as output:
+                            process=subprocess.Popen([sys.executable,str(Path(__file__).with_name('project_acpx.py')),'--config',str(found['config_path']),'run'],cwd=str(workspace),stdin=subprocess.DEVNULL,stdout=output,stderr=output,start_new_session=True)
+                        result['controller_pid']=process.pid
+                        result['action']='controller_started_activation_pending'
+
+            except (OSError,ValueError,RuntimeError,KeyError) as exc:
+                result.update(status='blocked',reason=str(exc),action='restore_supported_app_server_connection')
+        return result
     registration=folder/'enrollments'/(thread+'.json')
     if registration.exists():
         try:receipt=json.loads(registration.read_text())
         except (OSError,ValueError):return dict(out,status='blocked',reason='Existing enrollment unreadable; do not replace it')
         if not isinstance(receipt,dict) or receipt.get('scope')!=scope or receipt.get('provider_thread_id')!=thread or receipt.get('identity_source')!='runtime:CODEX_THREAD_ID':return dict(out,status='blocked',reason='Existing enrollment scope or runtime provenance differs')
         if receipt.get('status')=='adopted':return dict(out,status='blocked',reason='Previously adopted enrollment differs from current owner; explicit recovery required')
-        return dict(out,status='pending',registration=str(registration),registration_status=receipt.get('status'),action='continue_existing_handoff_after_current_turn',first_owner=not bool(old),activation_performed=False)
+        result=request_handoff(registration,receipt)
+        if c.get('coordinator_transport')!='app_server':result['action']='continue_existing_handoff_after_current_turn'
+        return result
     if inspect:return dict(out,status='registration_needed',action='enroll_existing_current_thread',first_owner=not bool(old),activation_performed=False)
     # Role enrollment is bounded/idempotent; actual ACP verification must be post-turn.
     try:path,receipt=enroll(found['config_path'],environment=env,cwd=workspace)
     except (OSError,ValueError,TypeError,KeyError):return dict(out,status='blocked',reason='Current runtime enrollment could not be written safely; preserve existing state')
-    return dict(out,status='pending',registration=str(path),registration_status=receipt['status'],action='finish_current_turn_then_supported_handoff',first_owner=not bool(old),activation_performed=False)
+    return request_handoff(path,receipt)
 
 
 def main():

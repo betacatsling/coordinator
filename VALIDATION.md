@@ -1,5 +1,15 @@
 # Release validation
 
+## Current verification boundary
+
+This document records historical observations as well as release tests; dated counts below are not a fresh validation result for every later change. The current documentation uses one default workflow: current-session coordinator, configured GitHub board, independent persistent executors and verified result publication.
+
+Desktop natural-trigger activation, platform idle-evidence integration, automatic production handoff and real user takeover remain unverified. Pending enrollment must not be presented as activation. Installation does not alter production bindings or dispatch tasks. Offline fixtures do not prove real GitHub mutations, desktop synchronization, reader report access or behavioral correctness.
+
+Tested external versions in the prior source runs: Codex CLI 0.159.0, acpx 0.19.4, @agentclientprotocol/codex-acp 2.1.1 and mcp-agents 0.33.1; Node.js 26.8.1. These are reproducibility evidence, not an automatic install or compatibility guarantee.
+
+## Historical validation record
+
 Validated on macOS with Python 3.9.6 and Node.js 26.8.1 on 2026-10-04.
 
 - Ten standard-library unittest cases cover legacy and H2 input, changed-task deduplication, default inbox mode with an unusable Node path, loaded-thread refusal, and explicit MCP continuation. Each watcher loop uses the real ten-second debounce, with fake MCP/renderer fixtures.
@@ -74,3 +84,25 @@ The source task reported forty-nine source tests passing on macOS and remote Lin
 Desktop natural-trigger end-to-end operation and real user takeover remain unverified. Production binding and tasks are unchanged. Pending enrollment remains distinct from activation; the current turn must end before external exact-ID verification. No production services, credentials, project content or private release records are published.
 
 Public macOS release validation: all 76 tests passed in 35.642 seconds using the bundled fake renderer and temporary localhost listeners. The conservative release scan passed; it is a heuristic, not a guarantee against every secret format. GitHub CI repeats these checks on Linux/Python 3.9.
+
+## Refactor candidate, 2026-10-05
+
+Cloud-side source review and offline tests cover receipt-bound executor recovery,
+version-bound dependency evidence, recoverable claim/result operations, and the
+single-controller shared-app-server queue candidate. Simulated RPC replies do not
+prove compatibility with a particular installed host. Existing production
+profiles and bindings have not been migrated by these changes. Shared-app-server
+queue dispatch, user-visible turn correlation, and controller startup still need
+an isolated host-level end-to-end run before live activation.
+
+### Shared app-server host verification, 2026-10-05
+
+The v1 refactor candidate passed 117/117 offline tests and release hygiene checks
+on macOS. An isolated real session on the existing official shared app-server
+registered its own runtime identity; one controller consumed that request. A
+message queued while the original turn was active ran after it ended. Two queued
+messages completed in the same native thread, for three observed completed turns
+total. This validates the candidate's exact text/turn correlation on that host.
+No real project ownership, research dispatch, GitHub mutation, or production
+configuration was changed. The Linux server passed initialize and queue-schema
+checks only; its full host-level end-to-end run remains unverified.

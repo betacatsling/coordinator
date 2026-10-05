@@ -28,23 +28,30 @@ class BackendTests(unittest.TestCase):
         if 'viewer' in q:return {'viewer':{'login':'u'}}
         if 'fields(' in q:return {'node':{'fields':{'pageInfo':{'hasNextPage':False},'nodes':[{'id':'F','options':[{'id':'ready','name':'Review'}]}]}}}
         if 'addComment' in q:
-            self.project['items']['nodes'][0]['content']['comments']['nodes'].append({'id':'C','body':v['body'],'author':{'login':'u'}})
-            return {'addComment':{'commentEdge':{'node':{'id':'C'}}}}
+            comments=self.project['items']['nodes'][0]['content']['comments']['nodes']
+            comment_id='C' if not comments else 'C'+str(len(comments)+1)
+            comments.append({'id':comment_id,'body':v['body'],'author':{'login':'u'}})
+            return {'addComment':{'commentEdge':{'node':{'id':comment_id}}}}
+        if 'updateIssueComment' in q:
+            next(c for c in self.project['items']['nodes'][0]['content']['comments']['nodes'] if c['id']==v['id'])['body']=v['body']
+            return {'updateIssueComment':{'issueComment':{'id':v['id']}}}
         if 'updateProjectV2ItemFieldValue' in q:
             self.project['items']['nodes'][0]['fieldValues']['nodes']=[{'field':{'id':'F'},'optionId':v['option']}]
             return {'updateProjectV2ItemFieldValue':{'projectV2Item':{'id':'ITEM'}}}
         raise AssertionError('Unexpected API')
     def test_dryrun_and_retry_after_lost_receipt(self):
+        write_claim(self.c,self.task,self.project,self.gh,False);self.calls=[]
         r=write_result(self.c,self.task,self.project,'ok',{},True,self.gh,True)
         self.assertEqual(len(r['operations']),2);self.assertFalse(any(q.startswith('mutation') for q,v in self.calls))
         first=write_result(self.c,self.task,self.project,'ok',{},True,self.gh,False)
-        self.assertEqual(first['comment_id'],'C');self.calls=[]
+        self.assertEqual(first['comment_id'],'C2');self.calls=[]
         again=write_result(self.c,self.task,self.project,'ok',{},True,self.gh,False)
         self.assertEqual(again['operations'],[]);self.assertFalse(any(q.startswith('mutation') for q,v in self.calls))
-        comment=self.project['items']['nodes'][0]['content']['comments']['nodes'][0]
+        comment=self.project['items']['nodes'][0]['content']['comments']['nodes'][-1]
         self.assertTrue(is_result_comment(comment['body'],self.c,'I'))
-        self.assertEqual(normalize_project(self.project,'P','u',['C'],'u/r')[0]['revision_hash'],self.task['revision_hash'])
+        self.assertEqual(normalize_project(self.project,'P','u',['C','C2'],'u/r')[0]['revision_hash'],self.task['revision_hash'])
     def test_scope_revision_author_and_unknown_status_refused(self):
+        write_claim(self.c,self.task,self.project,self.gh,False)
         for change in ['project','repository','revision','author','option']:
             c=copy.deepcopy(self.c);p=copy.deepcopy(self.project);t=copy.deepcopy(self.task)
             if change=='project':p['id']='other'
@@ -58,7 +65,7 @@ class BackendTests(unittest.TestCase):
     def test_claim_dryrun_retry_and_no_revision_feedback(self):
         self.c['writeback']['status'].update(claimed_option_id='ready',claimed_option_name='Review')
         preview=write_claim(self.c,self.task,self.project,self.gh,True)
-        self.assertEqual([o['operation'] for o in preview['operations']],['set_status','add_comment'])
+        self.assertEqual([o['operation'] for o in preview['operations']],['add_comment','set_status','update_comment'])
         self.assertFalse(any(q.startswith('mutation') for q,v in self.calls))
         first=write_claim(self.c,self.task,self.project,self.gh,False)
         self.assertEqual(first['comment_id'],'C')

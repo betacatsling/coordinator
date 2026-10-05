@@ -34,6 +34,9 @@ class BoardClaimReviewTests(unittest.TestCase):
         if 'updateProjectV2ItemFieldValue' in q:
             self.project['items']['nodes'][0]['fieldValues']['nodes'][0]['optionId']=args['option']
             return {'updateProjectV2ItemFieldValue':{'projectV2Item':{'id':'ITEM'}}}
+        if 'updateIssueComment' in q:
+            next(c for c in self.project['items']['nodes'][0]['content']['comments']['nodes'] if c['id']==args['id'])['body']=args['body']
+            return {'updateIssueComment':{'issueComment':{'id':args['id']}}}
         if 'addComment' in q:
             self.project['items']['nodes'][0]['content']['comments']['nodes'].append(
                 {'id':'COMMENT','body':args['body'],'author':{'login':'u'}})
@@ -71,7 +74,7 @@ class BoardClaimReviewTests(unittest.TestCase):
         issue['comments']['nodes'].append({'id':'OTHER','author':{'login':'other'},
             'body':marker_prefix(self.config,'I','claim')+self.task['dispatch_key']+' -->'})
         preview=write_claim(self.config,self.task,self.project,self.query,True)
-        self.assertEqual([op['operation'] for op in preview['operations']],['set_status','add_comment'])
+        self.assertEqual([op['operation'] for op in preview['operations']],['add_comment','set_status','update_comment'])
         self.assertFalse(any(q.startswith('mutation') for q,args in self.calls))
 
     def test_non_issue_and_other_repository_never_selected(self):

@@ -60,3 +60,22 @@ def select_tasks(project, config, tasks, observations):
 def assert_claimable(project, config, task):
     card=board_members(project,config).get(task['issue_id'],{})
     if not card.get('eligible') and not manually_authorized(config,task,card):raise ValueError('Card is no longer an eligible TODO/待做 task; do not claim')
+
+
+def assert_workflow_status(project, config, task, stages):
+    """Require a verified, non-excluded card at an explicitly allowed stage."""
+    card = board_members(project, config).get(task['issue_id'])
+    mapping = config.get('writeback', {}).get('status') or {}
+    if not card or card['excluded'] or mapping.get('field_id') != config['board']['status_field_id']:
+        raise ValueError('Card is no longer in the owned workflow scope')
+    field = next((f for f in project['fields']['nodes'] if f.get('id') == mapping['field_id']), {})
+    options = {o['id']: o['name'] for o in field.get('options', [])}
+    allowed = []
+    for stage in stages:
+        option = mapping.get(stage + '_option_id')
+        if not option or options.get(option) != mapping.get(stage + '_option_name'):
+            raise ValueError('Unknown/changed workflow status; refusing guess')
+        allowed.append(option)
+    if card['status_option_id'] not in allowed:
+        raise ValueError('Card is no longer in the expected owned workflow status')
+    return card

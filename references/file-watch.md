@@ -1,4 +1,6 @@
-# Document watching
+# Legacy PROJECT.md watcher and hooks
+
+Use only when the user explicitly selects local-document input. This is separate from the default [GitHub board workflow](github-acpx.md); never run competing input owners. Installation does not enable hooks or a watcher.
 
 Use a simple PROJECT.md:
 
@@ -32,6 +34,6 @@ Copying new skill files does not stop or reload an already running watcher. Keep
 
 No hook event means no delivery. An idle session waits for the next user interaction; deliberate monitoring may run `python3 scripts/wait_for_pending.py --project /absolute/project --timeout 45` in its own turn. Its tool completion supplies the normal PostToolUse event. Stop may wait up to twelve seconds for an existing debounce to settle, but cannot wake an already finished idle turn. Async hooks cannot start a new turn.
 
-## Observed validation and enabling scope
+## Enabling scope
 
-PreToolUse was verified in a real Codex CLI 0.159.0 current-session run after reviewing only the exact isolated project hook through /hooks. The coordinator quoted the two task titles from injected context without reading task files. Other reminder events were protocol-tested only. The template remains optional; copying skill files does not enable hooks in any real project. Enable and review specific project definitions only when requested. No all-trust shortcut or idle-wakeup claim is part of this workflow.
+Review and trust only the exact chosen project definitions; no trust-all shortcut. Copying skill files does not enable hooks. Verification evidence and event limitations are recorded in [VALIDATION.md](../VALIDATION.md).

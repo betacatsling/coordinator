@@ -14,9 +14,10 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from urllib.parse import urlsplit, quote
 from github_project_inputs import normalize_project
-from watch_project import atomic_write
+from state_io import atomic_write
 
 
 def gh(query, **variables):
@@ -67,9 +68,16 @@ def fetch(config):
     return project
 
 
+class CoordinationPending(RuntimeError):
+    pass
+
+
 class Coordinator:
     def __init__(self, config_path):
+        self.config_path=config_path
         self.config=json.loads(config_path.read_text());c=self.config
+        if c.get('source',{}).get('type')=='github' and not c.get('board') and c.get('intake_mode')!='project':
+            raise ValueError('GitHub board mapping required; legacy whole-project intake needs intake_mode=project')
         self.workspace=Path(c['workspace']).resolve(strict=True)
         backstage=(self.workspace/'.project-delegation').resolve()
         if self.workspace not in backstage.parents:raise ValueError('Workspace backstage escapes through symlink')
@@ -87,7 +95,7 @@ class Coordinator:
             self.state=json.loads(self.path.read_text()) if self.path.exists() else {'queue':[],'result_comment_ids':[]}
             from parallel_executors import ScopeGate
             self.results=queue.Queue();self.active={};self.stopped=threading.Event()
-            self.coordination_lock=threading.RLock();self.scope_gate=ScopeGate()
+            self.coordination_lock=threading.RLock();self.state_lock=threading.RLock();self.scope_gate=ScopeGate()
             self.max_parallel=int(c.get('max_parallel_executors',3))
             if not 1<=self.max_parallel<=6:raise ValueError('Parallel executor count must be 1..6')
             for key in ['node','acpx','adapter','codex','html_cli']:
@@ -104,7 +112,8 @@ class Coordinator:
             self.lock.close();raise
 
     def save(self):
-        atomic_write(self.path,json.dumps(self.state,ensure_ascii=False,indent=2)+'\n');os.chmod(self.path,0o600)
+        with self.state_lock:
+            atomic_write(self.path,json.dumps(self.state,ensure_ascii=False,indent=2)+'\n');os.chmod(self.path,0o600)
 
     def command(self,args,timeout=180):
         c=self.config
@@ -117,6 +126,10 @@ class Coordinator:
     def verify(self):
         binding=self.state.get('binding')
         if not binding:raise RuntimeError('No completed initialization; explicit init required')
+        if binding.get('transport')=='app_server':
+            from app_server_client import AppServer
+            with AppServer(binding['socket_path']) as client:client.thread(binding['provider_thread_id'],self.workspace)
+            return
         ledger=json.loads(self.ledger.read_text())
         if ledger.get('provider_thread_id')!=binding['provider_thread_id']:raise RuntimeError('Provider binding changed; refusing execution')
         meta=self.command(['sessions','show',self.name])[0]
@@ -139,6 +152,103 @@ class Coordinator:
             self.state['baseline_at']=time.time()
         self.save();self.verify()
 
+    def apply_binding_request(self):
+        # The existing controller owns this transition; no second worker or service stop.
+        if self.active or self.state.get('coordinator_request') or any(e.get('status')=='running' or e.get('recovery_required') for e in self.state.get('queue',[])):return False
+        paths=sorted((self.folder/'enrollments').glob('*-request.json'))
+        pending=[]
+        for path in paths:
+            try:
+                request=json.loads(path.read_text())
+                if not isinstance(request,dict):raise ValueError('Request must be an object')
+                if request.get('status')=='queued':pending.append((path,request))
+            except (OSError,ValueError):
+                self.state['binding_error']='Unreadable candidate request: '+path.name
+                self.save();return False
+        if not pending:return False
+        if len(pending)!=1:
+            self.state['binding_error']='Multiple candidate requests; select one explicitly';self.save();return False
+        path,request=pending[0]
+        try:
+            from app_server_client import AppServer
+            scope={k:self.identity[k] for k in ('workspace','repository','project_node_id','user_login')}
+            if request.get('scope')!=scope or request.get('identity_source')!='runtime:CODEX_THREAD_ID':raise ValueError('Candidate scope/runtime mismatch')
+            old=self.state.get('binding',{}).get('provider_thread_id')
+            if old==request['provider_thread_id'] and self.state.get('binding',{}).get('transport')=='app_server':
+                request.update(status='adopted');atomic_write(path,json.dumps(request));return True
+            if request.get('expected_old')!=old:raise ValueError('Coordinator changed since request')
+            with AppServer(request['socket_path']) as client:client.thread(request['provider_thread_id'],self.workspace)
+            # Native queue accepts work while the current UI turn is active; its scheduler waits.
+            if old is None:
+                from adopt_coordinator import initial_baseline
+                initial_baseline(self.config,self.state)
+            self.state['binding']={'transport':'app_server','provider_thread_id':request['provider_thread_id'],'socket_path':request['socket_path']}
+            self.state['identity']=self.identity;self.state['binding_error']=None
+            self.state.setdefault('handoff_history',[]).append({'from':old,'to':request['provider_thread_id'],'at':time.time()})
+            self.save()
+            request.update(status='adopted',adopted_at=time.time())
+            atomic_write(path,json.dumps(request,indent=2));return True
+        except (OSError,ValueError,RuntimeError,KeyError) as exc:
+            self.state['binding_error']=str(exc);self.save();return False
+
+    def queue_coordinate(self,prompt):
+        from app_server_client import AppServer,turn_result,TurnFailed
+        binding=self.state['binding'];pending=self.state.get('coordinator_request')
+        digest=hashlib.sha256(prompt.encode()).hexdigest()
+        key=getattr(self,'_request_key',None) or digest
+        history=self.state.setdefault('coordinator_results',{})
+        if key in history:
+            if history[key].get('error'):raise TurnFailed(history[key]['error'])
+            return history[key]['result']
+        if pending and pending.get('key',pending['digest'])!=key:raise CoordinationPending('Another coordinator request is still queued')
+        if not pending:
+            request_id=str(uuid.uuid4())
+            pending={'id':request_id,'key':key,'digest':digest,'text':'[project-delegation:'+request_id+']\n'+prompt,'status':'prepared'}
+            self.state['coordinator_request']=pending;self.save()
+        try:
+            with AppServer(binding['socket_path']) as client:
+                client.thread(binding['provider_thread_id'],self.workspace)
+                if pending['status']=='prepared':
+                    # Save before sending: a lost response must be reconciled, never blindly resent.
+                    pending['status']='submitting';self.save()
+                    result=client.request('thread/queue/add',{'threadId':binding['provider_thread_id'],'clientUserMessageId':pending['id'],'input':[{'type':'text','text':pending['text'],'text_elements':[]}]})
+                    pending.update(status='queued',queue_id=result['queuedSubmission']['id']);self.save()
+                deadline=time.monotonic()+self.config.get('timeout',120)
+                while time.monotonic()<deadline:
+                    value=turn_result(client.thread(binding['provider_thread_id'],self.workspace,True),pending['text'])
+                    if value is not None:
+                        self.state['coordinator_results'][key]={'result':value,'id':pending['id'],'digest':pending['digest']}
+                        self.state.pop('coordinator_request');self.save();return value
+                    time.sleep(.25)
+        except TurnFailed as exc:
+            self.state['coordinator_results'][key]={'error':str(exc),'id':pending['id'],'digest':pending['digest']}
+            self.state.pop('coordinator_request',None);self.save();raise
+        except Exception as exc:
+            raise CoordinationPending('Coordinator request retained for recovery: '+str(exc)) from exc
+        raise CoordinationPending('Native coordinator queue still pending; request retained without resubmission')
+
+    def recover_queued_coordination(self):
+        pending=self.state.get('coordinator_request')
+        if pending and not self.active:
+            from app_server_client import AppServer,turn_result,TurnFailed
+            binding=self.state['binding']
+            try:
+                with AppServer(binding['socket_path']) as client:
+                    result=turn_result(client.thread(binding['provider_thread_id'],self.workspace,True),pending['text'])
+                if result is None:return
+                key=pending.get('key',pending['digest'])
+                self.state.setdefault('coordinator_results',{})[key]={'result':result,'id':pending['id'],'digest':pending['digest']}
+                self.state.pop('coordinator_request');self.save()
+            except TurnFailed as exc:
+                key=pending.get('key',pending['digest'])
+                self.state.setdefault('coordinator_results',{})[key]={'error':str(exc),'id':pending['id'],'digest':pending['digest']}
+                self.state.pop('coordinator_request',None);self.save()
+            except (OSError,RuntimeError,ValueError) as exc:
+                self.state['coordination_error']=str(exc);self.save();return
+        if not self.state.get('coordinator_request'):
+            for entry in self.state['queue']:
+                if entry['status']=='waiting_coordinator':entry['status']='pending'
+
     def scan(self):
         project=fetch(self.config)
         from github_writeback import is_workflow_comment
@@ -154,7 +264,7 @@ class Coordinator:
         key=lambda t:t.get('dispatch_key',t['revision_hash'])
         current={t['issue_id']:key(t) for t in tasks}
         for entry in self.state['queue']:
-            if entry['status']=='pending' and current.get(entry['task']['issue_id'])!=key(entry['task']):entry['status']='superseded'
+            if entry['status']=='pending' and not entry.get('claim') and current.get(entry['task']['issue_id'])!=key(entry['task']):entry['status']='superseded'
         known={(e['task']['issue_id'],key(e['task'])) for e in self.state['queue'] if e['status']!='superseded'}
         for task in tasks:
             if (task['issue_id'],key(task)) not in known:self.state['queue'].append({'task':task,'status':'pending','queued_at':time.time()})
@@ -182,11 +292,14 @@ class Coordinator:
             except Exception:pass
         return {'local_path':str(path),'url':url if verified else None,'configured_url':url,'access_verified':verified}
 
-    def coordinate(self,prompt):
-        with self.coordination_lock:return self._coordinate(prompt)
+    def coordinate(self,prompt,request_key=None):
+        with self.coordination_lock:
+            self._request_key=request_key or hashlib.sha256(prompt.encode()).hexdigest()
+            return self._coordinate(prompt)
 
     def _coordinate(self,prompt):
         self.verify()
+        if self.state['binding'].get('transport')=='app_server':return self.queue_coordinate(prompt)
         # Use a private prompt file rather than putting user content in process arguments.
         prompt_path=self.folder/'current-prompt.txt';atomic_write(prompt_path,prompt);os.chmod(prompt_path,0o600)
         events=self.command(['prompt','-s',self.name,'--file',str(prompt_path)])
@@ -208,6 +321,33 @@ class Coordinator:
         if not isinstance(obj,dict):raise ValueError('Coordinator must return a JSON object')
         return obj
 
+    def dependency_inputs(self, task, plan):
+        latest={}
+        for entry in self.state['queue']:
+            if entry['status']!='superseded':latest[entry['task']['issue_id']]=entry
+        expected=plan.setdefault('dependency_versions',{})
+        data=[];waiting=[]
+        for issue_id in plan.get('depends_on',[]):
+            if issue_id==task['issue_id'] or issue_id not in latest:
+                raise ValueError('Self or unknown dependency')
+            entry=latest[issue_id];source=entry['task']
+            version=source.get('dispatch_key',source['revision_hash'])
+            if issue_id in expected and expected[issue_id]!=version:
+                raise ValueError('Dependency version changed; coordinator must re-plan')
+            expected[issue_id]=version
+            if entry['status']!='completed' or entry.get('acceptance',{}).get('accepted') is not True:
+                waiting.append(issue_id);continue
+            receipt_path=entry.get('executor_receipt')
+            if not receipt_path:
+                raise ValueError('Accepted dependency has no artifact receipt')
+            receipt=json.loads(Path(receipt_path).read_text())
+            if receipt.get('status')!='verified':raise ValueError('Dependency checks are not verified')
+            artifacts=receipt.get('artifacts',{})
+            if not artifacts:raise ValueError('Dependency has no verified artifacts')
+            data.append({'issue_id':issue_id,'version':version,'artifacts':artifacts,
+                         'checks':receipt.get('checks',[]),'patch':receipt.get('patch','')})
+        return data,waiting
+
     def work(self,index):
         leased=False
         try:
@@ -221,43 +361,59 @@ class Coordinator:
             executor=self.config.get('executor')
             if executor and executor.get('enabled'):
                 if executor.get('resume_thread_id'):raise ValueError('Global executor thread override is unsafe; continue only the individual task with its original receipt/workspace')
-                from mcp_executor import execute_assignment
-                from issue_worktree import create, validate_paths
+                from mcp_executor import execute_assignment, resume_assignment, recover_assignment, task_identity, validated_receipt
+                from issue_worktree import create, resume as resume_worktree, validate_paths
                 isolated=executor.get('isolate_worktree',False)
                 if isolated:
-                    plan=self.state['queue'][index].get('prepared_plan') or self.parse_object(self.coordinate(prompt+'\nReturn ONLY JSON with assignment, owned_paths, depends_on (Issue IDs, empty if independent), and resources (explicit shared resource names, empty for document-only work). Use a minimal list of repository-relative files or directories required by THIS Issue. Exclude .git, .codex, .agents, .project-delegation and reports. Do not invent shell/check commands.'))
+                    plan=self.state['queue'][index].get('prepared_plan') or self.parse_object(self.coordinate(prompt+'\nReturn ONLY JSON with assignment, owned_paths, depends_on (Issue IDs, empty if independent), and resources (explicit shared resource names, empty for document-only work). Use a minimal list of repository-relative files or directories required by THIS Issue. Exclude .git, .codex, .agents, .project-delegation and reports. Do not invent shell/check commands.',request_key=task.get('dispatch_key',task['revision_hash'])+':plan'))
+                    self.state['queue'][index]['prepared_plan']=plan;self.save()
                     paths=validate_paths(plan.get('owned_paths'))
                     dependencies=plan.get('depends_on',[]);resources=plan.get('resources',[])
                     if not isinstance(dependencies,list) or not all(isinstance(v,str) for v in dependencies) or not isinstance(resources,list) or not all(isinstance(v,str) for v in resources):raise ValueError('Invalid dependency/resource declaration')
                     known_ids={e['task']['issue_id'] for e in self.state['queue']}
                     if task['issue_id'] in dependencies or set(dependencies)-known_ids:raise ValueError('Self or unknown dependency outside current Project tasks')
-                    satisfied={e['task']['issue_id'] for e in self.state['queue'] if e.get('acceptance',{}).get('accepted') is True}
+                    dependency_data,waiting=self.dependency_inputs(task,plan)
                     if set(resources)-set(executor.get('allowed_resources',[])):raise ValueError('Unapproved shared resource request')
-                    if set(dependencies)-satisfied:
+                    if waiting:
                         self.results.put((index,'waiting_dependencies',{'depends_on':dependencies,'prepared_plan':plan}));return
                     if not self.scope_gate.try_acquire(index,paths,resources):
                         self.results.put((index,'waiting_resources',{'prepared_plan':plan}));return
                     leased=True
                     if not isinstance(plan.get('assignment'),str):raise ValueError('Missing assignment')
-                    target,head=create(self.workspace,task,self.folder,paths)
+                    receipt_path=self.folder/('executor-'+task.get('dispatch_key',task['revision_hash'])+'.json')
+                    previous=json.loads(receipt_path.read_text()) if receipt_path.exists() else None
+                    if previous:target,head=resume_worktree(self.workspace,task,self.folder,paths,previous)
+                    else:target,head=create(self.workspace,task,self.folder,paths)
                     executor=dict(executor,cwd=str(target),owned_paths=paths,base_head=head)
                 else:
                     target=Path(executor['cwd']).resolve(strict=True)
                     if target!=self.workspace and self.workspace not in target.parents:raise ValueError('Executor must belong to selected repository workspace')
-                    plan=self.state['queue'][index].get('prepared_plan') or self.parse_object(self.coordinate(prompt+'\nReturn ONLY JSON with assignment and owned_paths. Permitted owned_paths: '+json.dumps(executor['owned_paths'])+'. No implementation in this session.'))
+                    plan=self.state['queue'][index].get('prepared_plan') or self.parse_object(self.coordinate(prompt+'\nReturn ONLY JSON with assignment and owned_paths. Permitted owned_paths: '+json.dumps(executor['owned_paths'])+'. No implementation in this session.',request_key=task.get('dispatch_key',task['revision_hash'])+':plan'))
                     if set(plan.get('owned_paths',[]))!=set(executor['owned_paths']) or not isinstance(plan.get('assignment'),str):raise ValueError('Coordinator assignment differs from configured file scope')
                 receipt_path=self.folder/('executor-'+task.get('dispatch_key',task['revision_hash'])+'.json')
-                receipt=execute_assignment(plan['assignment']+'\nRead-only source snapshots: '+json.dumps(context,ensure_ascii=False),executor,receipt_path,self.config['node'],on_session=lambda info:self.results.put((index,'executor_session',dict(info,executor_receipt=str(receipt_path)))))
+                executor=dict(executor,task_identity=task_identity(task))
+                brief=plan['assignment']+'\nRead-only source snapshots: '+json.dumps(context,ensure_ascii=False)
+                if isolated:brief+='\nVerified upstream artifacts (reference only): '+json.dumps(dependency_data,ensure_ascii=False)
+                announce=lambda info:self.results.put((index,'executor_session',dict(info,executor_receipt=str(receipt_path))))
+                if receipt_path.exists():
+                    previous=json.loads(receipt_path.read_text())
+                    if previous.get('status') in {'running','recovery_required','waiting_for_input'}:
+                        receipt=recover_assignment(executor,receipt_path,self.config['node'],on_session=announce)
+                    elif previous.get('status')=='verified' and not self.state['queue'][index].get('resume_requested'):receipt=validated_receipt(executor,receipt_path)
+                    else:receipt=resume_assignment(brief,executor,receipt_path,self.config['node'],on_session=announce)
+                else:receipt=execute_assignment(brief,executor,receipt_path,self.config['node'],on_session=announce)
                 if receipt['status']!='verified':raise RuntimeError('Independent executor checks failed; inspect receipt')
                 if receipt.get('thread_id')==self.state['binding']['provider_thread_id']:raise RuntimeError('Executor reused coordinator identity')
-                acceptance=self.parse_object(self.coordinate('You are the same fixed coordinator. Independently assess the actual source and program-run checks below against the original task. Do not implement or use tools. Return ONLY JSON with accepted (boolean), summary, and blockers. Do not treat an executor claim alone as evidence.\nOriginal task: '+json.dumps(task,ensure_ascii=False)+'\nProgram observations: '+json.dumps(receipt,ensure_ascii=False)))
-                if acceptance.get('accepted') is not True:raise RuntimeError('Coordinator rejected acceptance: '+str(acceptance.get('blockers')))
+                acceptance=self.parse_object(self.coordinate('You are the same fixed coordinator. Independently assess the actual source and program-run checks below against the original task. Do not implement or use tools. Return ONLY JSON with accepted (boolean), summary, and blockers. Do not treat an executor claim alone as evidence.\nOriginal task: '+json.dumps(task,ensure_ascii=False)+'\nProgram observations: '+json.dumps(receipt,ensure_ascii=False),request_key=task.get('dispatch_key',task['revision_hash'])+':accept:'+str(receipt.get('completed_at','first'))))
+                if acceptance.get('accepted') is not True:
+                    self.results.put((index,'blocked',{'error':'Coordinator requested revision: '+str(acceptance.get('blockers')),'acceptance':acceptance,'executor_receipt':str(receipt_path),'prepared_plan':plan}));return
                 text=str(acceptance.get('summary',''))+'\n\nIndependent executor configured checks passed (scope/syntax checks alone do not prove behavioral correctness):\n'+'\n'.join('- '+shlex.join(c['argv']) for c in receipt['checks'])
                 data={'executor_receipt':str(receipt_path),'acceptance':acceptance}
             else:
-                text=self.coordinate(prompt+'\nReturn bounded executor assignments, acceptance evidence or unresolved blockers.');data={}
+                text=self.coordinate(prompt+'\nReturn bounded executor assignments, acceptance evidence or unresolved blockers.',request_key=task.get('dispatch_key',task['revision_hash'])+':coordinate');data={}
             report=self.publish(self.state['queue'][index],text)
             self.results.put((index,'completed',dict(data,result=text,report=report,completed_at=time.time())))
+        except CoordinationPending as exc:self.results.put((index,'waiting_coordinator',{'error':str(exc)}))
         except Exception as exc:self.results.put((index,'blocked',{'error':str(exc)}))
         finally:
             if leased:self.scope_gate.release(index)
@@ -302,13 +458,6 @@ class Coordinator:
             if self.config['source']['type']=='github' and settings.get('enabled'):
                 from github_writeback import write_claim
                 live=fetch(self.config)
-                if self.config.get('board'):
-                    from github_board import assert_claimable
-                    if not entry.get('claim',{}).get('comment_id'):assert_claimable(live,self.config,entry['task'])
-                    else:
-                        from github_board import board_members
-                        card=board_members(live,self.config).get(entry['task']['issue_id'],{})
-                        if card.get('excluded') or card.get('status_option_id')!=settings.get('status',{}).get('claimed_option_id'):raise ValueError('Previously admitted card is no longer owned/in progress')
                 claim=write_claim(self.config,entry['task'],live,gh,settings.get('dry_run',True))
                 entry['claim']=claim
                 if claim.get('comment_id') and claim['comment_id'] not in self.state['result_comment_ids']:self.state['result_comment_ids'].append(claim['comment_id'])
@@ -318,11 +467,17 @@ class Coordinator:
         return True
 
     def release_waiting(self):
-        accepted={e['task']['issue_id'] for e in self.state['queue'] if e.get('acceptance',{}).get('accepted') is True}
         for entry in self.state['queue']:
             plan=entry.get('prepared_plan',{})
-            if entry['status']=='waiting_dependencies' and set(entry.get('depends_on',[]))<=accepted:entry['status']='pending'
-            if entry['status']=='waiting_resources' and self.scope_gate.available(plan.get('owned_paths',[]),plan.get('resources',[])):entry['status']='pending'
+            if entry['status']=='waiting_dependencies':
+                plan.setdefault('depends_on',entry.get('depends_on',[]))
+                try:
+                    _,waiting=self.dependency_inputs(entry['task'],plan)
+                    if not waiting:entry['status']='pending'
+                except (ValueError,OSError) as exc:
+                    entry.update(status='blocked',error=str(exc))
+            if entry['status']=='waiting_resources' and self.scope_gate.available(plan.get('owned_paths',[]),plan.get('resources',[])):
+                entry['status']='pending'
 
     def run(self,once=False):
         legacy=self.workspace/'.project-delegation/state.json'
@@ -332,14 +487,17 @@ class Coordinator:
                 try:os.kill(pid,0)
                 except ProcessLookupError:pass
                 else:raise RuntimeError('Legacy watcher is alive (PID '+str(pid)+'); refuse competing input ownership. Settle its pending work and stop only that watcher explicitly before switching.')
+        self.apply_binding_request()
         self.verify()
         # An interrupted request may already have executed. Never automatically replay it.
         for entry in self.state['queue']:
-            if entry['status']=='running':entry.update(status='blocked',error='Interrupted controller; inspect original fixed session before explicit reconciliation')
+            if entry['status']=='running':entry.update(status='blocked',recovery_required=True,error='Interrupted controller; inspect original fixed session before explicit reconciliation')
         self.save();next_poll=0
         signal.signal(signal.SIGTERM,lambda *_:self.stopped.set());signal.signal(signal.SIGINT,lambda *_:self.stopped.set())
         while not self.stopped.is_set():
             if time.monotonic()>=next_poll:
+                self.recover_queued_coordination()
+                self.apply_binding_request()
                 try:self.scan()
                 except Exception as exc:self.state['source_error']=str(exc);self.save()
                 next_poll=time.monotonic()+max(10,self.config.get('poll_seconds',15))
@@ -355,7 +513,7 @@ class Coordinator:
                 if index is not None:
                     if self.admit(index):
                         worker=threading.Thread(target=self.work,args=(index,),daemon=True);self.active[index]=worker;worker.start()
-                elif once and not self.active:return
+                elif once and not self.active and not self.state.get('coordinator_request') and not any(e['status']=='waiting_coordinator' for e in self.state['queue']):return
             if once and self.state.get('source_error'):raise RuntimeError(self.state['source_error'])
             self.stopped.wait(.25)
         # Do not cancel a known admitted turn; settle it before releasing the project lock.
