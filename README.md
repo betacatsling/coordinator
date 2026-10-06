@@ -1,4 +1,4 @@
-# project-delegation — Pi GitHub Project extension
+# Coordinator — Pi GitHub Project extension
 
 One Pi extension and one short Manager skill. The extension reads a single
 GitHub Project, observes Issue/status/comment changes, wakes its fixed Manager
@@ -120,8 +120,8 @@ this package does not set up authentication. Clone this repository, then install
 its local Pi package:
 
 ```sh
-git clone https://github.com/betacatsling/project-delegation.git
-cd project-delegation
+git clone https://github.com/betacatsling/coordinator.git
+cd coordinator
 npm test
 pi install .
 ```
@@ -150,7 +150,7 @@ Herdsman work; use `staff_stop` for work you intend to pause. Run `pi list`, the
 workspace's `.pi/github-project.json` and `.pi/github-project-state.json` only
 when you intend to discard that binding and delivery history.
 
-## 中文说明
+## Coordinator 中文说明
 
 这是一个 Pi 扩展和一个简短 Manager skill：读取单个 GitHub Project，合并变化后
 通知固定 Manager；Manager 用 PiHerdsman 原生工具派工、审阅结果并回写 Issue。
