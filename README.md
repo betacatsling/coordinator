@@ -86,21 +86,38 @@ Manager puts the Issue URL first in native delegation task text and uses
 `staff_list`/`staff_inspect` (or `staff_transcript` for full context) to recover
 ownership before deciding to resume or delegate; the extension never dispatches work itself.
 
-Busy sessions and pending user input hold changes in one merged batch. Once
-idle, the extension uses public `sendUserMessage(..., {deliverAs:'followUp',
+Notifications carry Issue number/title/URL, first-observed task text, observed
+status changes and comment author/text/link. First startup reports current tasks
+and comments for reconciliation; joining the board does not prove Issue creation.
+Comment authors do not identify edit actors. Polling is a snapshot comparison,
+not a GitHub event audit: changes that happen entirely between polls may be missed.
+
+Busy sessions and pending user input hold changes in one merged batch. Each
+comment ID retains its latest observed excerpt; additions followed by edits are
+labeled together, and different comments are retained separately. Status changes
+merge the first and latest observed values with a transition count, including
+round trips. This is not a full history. Once idle, the extension uses public `sendUserMessage(..., {deliverAs:'followUp',
 expandPromptTemplates:false})`, preserving Herdsman's `before_agent_start`
 Manager charter. Its void return is not a delivery receipt. A small in-flight
 batch retains its stable ID until that ID appears in a persisted user message
 on the current Pi branch. More changes merge into a second pending batch while
 that notice is in flight. `agent_settled` only drains existing batches.
 
-`.pi/github-project-state.json` stores scope/enabled/pause, per-Issue hashes,
-pending/delivery metadata and own-comment hashes. It
-stores no Issue text or credentials, uses atomic replacement and mode 0600,
+`.pi/github-project-state.json` stores scope/enabled/pause, own-comment hashes
+and latest comparison hashes/metadata, not body history.
+Pending/delivery batches temporarily persist external body excerpts (up to 1,500
+characters per body and 240 per title); they clear after the Pi transcript receipt.
+The event backlog grows with distinct pending comments while the Manager cannot
+receive a notice. Each message has a 24,000-character detail budget and reports
+omitted event counts, with links/read entries for full current content. Truncation
+does not affect full-body change hashes or write revisions. No credentials are
+stored. State uses atomic replacement and mode 0600,
 and rejects symlink escapes. Own unchanged comments and confirmed own status
 writes do not cause notification loops. Reload refuses to overwrite state with an incompatible scope, author allowlist
-or status mapping. Poll-interval changes preserve delivery history. When
-upgrading old state, first load and save it with the unchanged configuration
+or status mapping. Poll-interval changes preserve delivery history. Hash-only
+cursors are enriched from the next successful snapshot; where the
+old comparison lacks detail, a reconciliation notice avoids guessing past events.
+When upgrading old state, first load and save it with the unchanged configuration
 before changing the interval. Confirm a state write: loading a paused watcher
 alone does not save its upgraded fingerprint. Do not delete pending history
 to bypass a binding mismatch.
@@ -162,6 +179,13 @@ when you intend to discard that binding and delivery history.
 按 [启动与重连说明](STARTUP.md) 在 Herdr 中绑定固定 Manager 会话并显式启用。
 之后 Termius 只 attach 到仍在运行的主 Pi，不要每次 SSH 连接都启动 Pi。
 仅在原进程确实退出后，才单独恢复同一个已记录的 Pi 会话。
+
+通知直接带 Issue 编号、标题、链接、首次观察任务正文、观察到的状态变化及评论
+作者、正文和链接。首次启动是当前快照对账，加入看板不等于刚创建；评论作者不代表
+编辑者。同一评论的忙时编辑保留最新摘要，多条评论分别保留，状态往返仍有变化标记。
+正文摘要会暂存在待通知状态文件中，收到 Pi 持久回执后清除；正文每项限 1500 字符，
+通知详情总预算 24000 字符，超限明确报告省略数并给完整读取入口。游标只存当前
+比较哈希和元数据，不保存正文历史；轮询无法发现两次采样间发生又消失的所有变化。
 
 工具共四个：`github_project_read` 无参数读取看板，带 `issueId` 读取完整 Issue
 和评论；回写前必须完成后者。`github_issue_comment`、`github_project_status`

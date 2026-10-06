@@ -38,7 +38,7 @@ test('busy Manager coalesces repeated events and newest changes into one wake',a
   assert.equal(f.host.sent.length,1);assert.equal(f.store.value.pending.changes.length,2);
   f.host.idle=true;await f.controller.idle();assert.equal(f.host.sent.length,2);
   assert.match(f.host.sent[1].text,/Issue #1: changed/);assert.match(f.host.sent[1].text,/Issue #2: added/);
-  assert.ok(!f.host.sent[1].text.includes('two'),'notification does not quote unread comments');
+  assert.ok(f.host.sent[1].text.includes('two'),'notification quotes the observed comment edit');
 });
 test('pending user input prevents notification until idle with no pending input',async()=>{
   const f=fixture();f.host.pending=true;await start(f);assert.equal(f.host.sent.length,0);
@@ -226,10 +226,10 @@ test('polling and direct reads share lifecycle cancellation and restart gets a f
 });
 test('observed cursor stores only fields used by comparison and removed-Issue notices',async()=>{
   const f=fixture();await start(f);await settle(f);
-  assert.deepEqual(Object.keys(f.store.value.observed.I1).sort(),['hash','number']);
+  assert.deepEqual(Object.keys(f.store.value.observed.I1).sort(),['comments','content','hash','number','status','title','url']);
   const issue=await f.controller.readIssue('I1');
   await f.controller.status({issueId:'I1',expectedRevision:issue.revision,expectedStatusId:issue.statusId,stage:'done'});
-  assert.deepEqual(Object.keys(f.store.value.observed.I1).sort(),['hash','number']);
+  assert.deepEqual(Object.keys(f.store.value.observed.I1).sort(),['comments','content','hash','number','status','title','url']);
   await observe(f);assert.equal(f.host.sent.length,1,'confirmed own status still stays silent');
 });
 
