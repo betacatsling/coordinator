@@ -1,13 +1,18 @@
 # Validation
 
-The fixed source passed 55/55 offline Node tests on macOS. Publication checks
+The fixed source passed 55/55 offline Node tests on macOS. Ten additional
+multi-project isolation tests bring the publication suite to 65/65. They use
+two fake Pi Managers and a shared fake GraphQL service with real adapters and
+file-backed state, covering independent scopes, pagination, notices, receipts,
+restart recovery, writes, forks and pauses. They do not verify native multi-host
+workers, Termius, Herdr leases or production configurations. Publication checks
 rerun `npm test` and the release hygiene scan. CI runs those checks on Node 22
 and 24 on Linux. These tests use fake Pi/GitHub and need no credentials/network.
 
 ```sh
 npm test
 node scripts/scan-release.mjs
-node tests/pi-loader-smoke.mjs <existing-pi-package-directory>
+node tests/pi-loader-smoke.mjs /path/to/existing-pi-package
 ```
 
 The optional loader check previously passed against Pi 1.0.2: one TypeScript

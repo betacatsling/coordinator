@@ -28,7 +28,9 @@ To prepare a later reviewed trial, put the reviewed configuration in the target
 workspace's `.pi/github-project.json`; use [examples/github-project.json](examples/github-project.json).
 Record the exact existing Manager session ID from Pi, not a worker or fork ID.
 After separately entering Herdsman Manager mode, first launch that existing
-session with this extension and the explicit `--github-project-manager` flag.
+session inside its Herdr-owned pane with this extension and the explicit
+`--github-project-manager` flag. See [startup and reconnect](STARTUP.md) for the
+separate first-enable and attach-only Termius paths.
 The package manifest exposes only `extensions/github-project/index.ts` and the
 short skill. Do not install pi-subagents alongside this workflow.
 
@@ -37,8 +39,9 @@ persisted enabled owner record; the exact configured session ID; and active
 `staff_delegate`, `staff_resume`, `staff_message`, `staff_list` tools. This
 capability check does not claim to prove Herdsman's internal Manager lease.
 Lead/Agent/new/fork sessions cannot poll or use these GitHub tools, even if the
-extension or flag is inherited. Restoring the same session can use only
-`--session`; it does not need the enable flag again.
+extension or flag is inherited. Restoring an exited Pi process uses the same
+Pi `--session`; it does not need the enable flag again. Reconnecting to a
+running Manager only attaches to its Herdr terminal and must not launch Pi again.
 
 ## Tools
 
@@ -129,16 +132,12 @@ pi install .
 Copy `examples/github-project.json` to `.pi/github-project.json` in your target
 workspace. Replace every placeholder with your repository, Project node ID,
 Status field/option IDs, allowed GitHub authors and exact existing Manager
-session ID. This file is configuration, not a credential file. Start from that
-workspace after activating Herdsman's Manager role:
-
-```sh
-pi --session <existing-manager-session-file> --github-project-manager
-```
-
-For subsequent resume, use the same `--session` without the enable flag. The
-extension does not create or select the Manager for you. One owner process per
-Project is required. This package has no npm runtime dependencies; Pi supplies
+session ID. This file is configuration, not a credential file. Follow
+[the startup guide](STARTUP.md) to bind that fixed Pi session inside Herdr once
+and configure Termius to attach to it on later connections. Creating or restoring
+a Pi process is a separate setup/recovery action, never a reconnect fallback.
+The extension does not create or select the Manager for you. One owner process
+per Project is required. This package has no npm runtime dependencies; Pi supplies
 the extension APIs, and PiHerdsman/Herdr remain external dependencies.
 
 ## Stop and uninstall
@@ -157,7 +156,9 @@ when you intend to discard that binding and delivery history.
 依赖 Node >=22.19、Pi >=1.0.1、PiHerdsman 0.21.0、Herdr >=0.9.3 和已登录的 gh。
 依赖需另行安装，步骤见上文与 [依赖说明](DEPENDENCIES.md)。克隆仓库后运行
 `npm test`、`pi install .`，再填写目标工作区的 `.pi/github-project.json`。
-绑定既有 Manager 会话并显式启用，之后恢复同一会话即可。
+按 [启动与重连说明](STARTUP.md) 在 Herdr 中绑定固定 Manager 会话并显式启用。
+之后 Termius 只 attach 到仍在运行的主 Pi，不要每次 SSH 连接都启动 Pi。
+仅在原进程确实退出后，才单独恢复同一个已记录的 Pi 会话。
 
 用 `github_project_watch` 的 stop 操作持久暂停；卸载用 `pi list` 查明来源，再运行
 `pi remove <installed-source>`。本项目没有 ChatGPT 侧栏映射、独立 WebUI 或
