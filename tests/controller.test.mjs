@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ProjectController } from '../extensions/github-project/controller.mjs';
-import { MemoryState } from '../extensions/github-project/state.mjs';
 import { fixture,config,start,settle,observe,FakeHost,FakeGitHub,item,project,deferred } from './fakes.mjs';
 
 test('default off; explicit first read wakes Manager, with no auto-dispatch or write', async()=>{
@@ -213,4 +212,33 @@ test('own comment save failure then comment retry does not create a self-notific
   assert.deepEqual(f.github.writes.map(w=>w.operation),['comment']);
   assert.equal((await f.controller.comment(p)).recovered,true);await observe(f);
   assert.deepEqual(f.github.writes.map(w=>w.operation),['comment']);assert.equal(f.host.sent.length,1);
+});
+
+
+test('polling and direct reads share lifecycle cancellation and restart gets a fresh signal',async()=>{
+  const f=fixture();await start(f);await settle(f);const signals=[];
+  f.github.fetchProject=async(_cfg,signal)=>{signals.push(signal);signal.throwIfAborted();return project();};
+  await observe(f);await f.controller.readIssue('I1');
+  assert.equal(signals[0],signals[1],'a separate polling abort controller is unnecessary');
+  await f.controller.stop({explicit:true});assert.equal(signals[0].aborted,true);
+  await f.controller.readIssue('I1');assert.notEqual(signals[2],signals[0]);assert.equal(signals[2].aborted,false);
+  await f.controller.start({explicit:true});assert.equal(f.clock.jobs.size,1);
+});
+test('observed cursor stores only fields used by comparison and removed-Issue notices',async()=>{
+  const f=fixture();await start(f);await settle(f);
+  assert.deepEqual(Object.keys(f.store.value.observed.I1).sort(),['hash','number']);
+  const issue=await f.controller.readIssue('I1');
+  await f.controller.status({issueId:'I1',expectedRevision:issue.revision,expectedStatusId:issue.statusId,stage:'done'});
+  assert.deepEqual(Object.keys(f.store.value.observed.I1).sort(),['hash','number']);
+  await observe(f);assert.equal(f.host.sent.length,1,'confirmed own status still stays silent');
+});
+
+
+test('one in-flight notice can be retried explicitly without losing a newer batch',async()=>{
+  const f=fixture();await start(f);const first=f.host.sent[0].text;
+  assert.equal(f.controller.noticeSent,true);f.github.externalComment();await observe(f);
+  assert.ok(f.store.value.pending);assert.equal(f.host.sent.length,1);
+  f.controller.noticeSent=false;await f.controller.idle();assert.equal(f.host.sent[1].text,first);
+  await settle(f);assert.equal(f.host.sent.length,3);assert.notEqual(f.host.sent[2].text,first);
+  await settle(f);assert.equal(f.controller.noticeSent,false);assert.equal(f.store.value.delivery,null);
 });

@@ -14,8 +14,7 @@ layer, worker launcher, supervisor, HTML renderer or separate polling service.
 Use Node >=22.19, Pi >=1.0.1 and the separately managed Pi Herdsman v0.21.0 /
 Herdr >=0.9.3 stack. Herdsman provides `staff_delegate`, `staff_resume`,
 `staff_message`, `staff_stop`, `staff_list` and `staff_inspect`. The extension
-uses none of its internal RPCs. Manager → branch Lead → Agent is sufficient;
-Chief is optional. Dependencies were prepared separately in isolated prefixes; this extension
+uses none of its internal RPCs. Delegation and review stay in the Manager skill. Dependencies were prepared separately in isolated prefixes; this extension
 does not install runtimes or alter global Pi settings. SSH disconnect persistence belongs to Herdsman/Herdr; machine reboot
 does not guarantee unattended restoration.
 
@@ -47,13 +46,12 @@ running Manager only attaches to its Herdr terminal and must not launch Pi again
 
 | Tool | Purpose |
 | --- | --- |
-| `github_project_read` | Read current scoped cards/statuses and statuses. |
-| `github_issue_read` | Read the full current Issue and all comments; return revision and source authority labels. |
+| `github_project_read` | Read scoped cards/statuses; pass `issueId` for the full Issue, every comment, revision and source authority labels. |
 | `github_issue_comment` | Add an ordinary comment, with a stable request ID for retry. |
 | `github_project_status` | Write an explicitly mapped status; comment and status writes are independent. |
 | `github_project_watch` | Inspect/start/stop the in-process watcher, or explicitly retry an unconfirmed notice. |
 
-The Manager must call `github_issue_read` before comment or status writes.
+The Manager must call `github_project_read` with `issueId` before comment or status writes.
 Pass its `revision` as `expectedRevision` and the current `statusId` as
 `expectedStatusId` for status writes. Changes invalidate stale writes. A status
 write only changes status; it never posts a comment or asks for an acceptance
@@ -75,7 +73,9 @@ before writing, including every status change.
 
 The factory only registers APIs. `session_start` starts/reconciles the owner;
 `before_agent_start` and tool results recheck Manager capabilities after role
-activation. Shutdown, reload and session replacement abort the old request,
+activation. Configuration is read and validated once when the controller is
+created; reload the session to apply file edits. An active controller keeps its
+original binding until then. Shutdown, reload and session replacement abort the old request,
 invalidate its generation and stop its single self-scheduling timer. Explicit
 stop persists pause across reload. Role loss stops polling. Polling requests
 and extension read/write operations are serialized; no second poll overlaps.
@@ -94,18 +94,21 @@ batch retains its stable ID until that ID appears in a persisted user message
 on the current Pi branch. More changes merge into a second pending batch while
 that notice is in flight. `agent_settled` only drains existing batches.
 
-`.pi/github-project-state.json` stores owner/enabled/pause, per-Issue hashes,
+`.pi/github-project-state.json` stores scope/enabled/pause, per-Issue hashes,
 pending/delivery metadata and own-comment hashes. It
 stores no Issue text or credentials, uses atomic replacement and mode 0600,
 and rejects symlink escapes. Own unchanged comments and confirmed own status
-writes do not cause notification loops. Configuration/scope changes require
-explicit reconciliation; this version refuses to overwrite incompatible state.
+writes do not cause notification loops. Reload refuses to overwrite state with an incompatible scope, author allowlist
+or status mapping. Poll-interval changes preserve delivery history. When
+upgrading old state, first load and save it with the unchanged configuration
+before changing the interval. Confirm a state write: loading a paused watcher
+alone does not save its upgraded fingerprint. Do not delete pending history
+to bypass a binding mismatch.
 
 Delivery is crash-recoverable, not a distributed exactly-once dispatch lock.
 A crash before transcript persistence can repeat the same notice ID. Neither
 GitHub state nor the small local record is a cross-instance atomic claim.
-Run one owner process per Project. Model handoffs and acceptance remain the
-Manager's responsibility. A failed user-message preflight keeps its batch;
+Run one owner process per Project. A failed user-message preflight keeps its batch;
 after fixing the cause, use `retryNotice` or restart the bound session.
 
 ## Validation
@@ -159,6 +162,13 @@ when you intend to discard that binding and delivery history.
 按 [启动与重连说明](STARTUP.md) 在 Herdr 中绑定固定 Manager 会话并显式启用。
 之后 Termius 只 attach 到仍在运行的主 Pi，不要每次 SSH 连接都启动 Pi。
 仅在原进程确实退出后，才单独恢复同一个已记录的 Pi 会话。
+
+工具共四个：`github_project_read` 无参数读取看板，带 `issueId` 读取完整 Issue
+和评论；回写前必须完成后者。`github_issue_comment`、`github_project_status`
+分别评论和改状态，`github_project_watch` 保留 status/start/stop/retryNotice 操作。
+配置只在会话 reload 后生效；运行中沿用原绑定。新状态绑定不受轮询间隔及语义相同
+的字段顺序影响。旧 schema-2 状态需先用原配置加载并确认保存，再修改轮询间隔；
+暂停状态仅加载未必会保存。范围、授权作者或状态映射变化仍拒绝自动重绑。
 
 用 `github_project_watch` 的 stop 操作持久暂停；卸载用 `pi list` 查明来源，再运行
 `pi remove <installed-source>`。本项目没有 ChatGPT 侧栏映射、独立 WebUI 或

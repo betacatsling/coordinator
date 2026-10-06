@@ -4,8 +4,8 @@ import { mkdtemp,mkdir,readFile,writeFile,stat,symlink,rm,readdir } from 'node:f
 import path from 'node:path';
 import os from 'node:os';
 import { GitHub } from '../extensions/github-project/github.mjs';
-import { FileState,newState } from '../extensions/github-project/state.mjs';
-import { validateConfig,normalizeProject } from '../extensions/github-project/domain.mjs';
+import { FileState,newState,validateState } from '../extensions/github-project/state.mjs';
+import { validateConfig,normalizeProject,digest } from '../extensions/github-project/domain.mjs';
 import { config,project,item,connection } from './fakes.mjs';
 
 test('Project item and Issue comment pagination fetches all pages before normalization',async()=>{
@@ -81,7 +81,7 @@ test('configuration rejects credentials, extra scopes, unmapped stages and inval
 test('file state round trips atomically, private permissions, no Issue text stored',async t=>{
   const cwd=await mkdtemp(path.join(os.tmpdir(),'pi-state-test-'));t.after(()=>rm(cwd,{recursive:true,force:true}));
   const store=new FileState(cwd);const cfg=validateConfig(config);const state=await store.load(cfg);
-  state.enabled=true;state.observed={I1:{hash:'hash',number:1,statusId:'ready'}};await store.save(state);
+  state.enabled=true;state.observed={I1:{hash:'hash',number:1}};await store.save(state);
   assert.deepEqual(await new FileState(cwd).load(cfg),state);assert.equal((await stat(store.file)).mode&0o777,0o600);
   assert.equal((await readdir(path.join(cwd,'.pi'))).filter(f=>f.endsWith('.tmp')).length,0);
   const raw=await readFile(store.file,'utf8');assert.ok(!raw.includes('Do approved work'));
@@ -100,4 +100,43 @@ test('symlinked state folder/file cannot redirect writes out of workspace',async
   await rm(path.join(cwd,'.pi'));await mkdir(path.join(cwd,'.pi'));await writeFile(path.join(outside,'untouched'),'sentinel');
   await symlink(path.join(outside,'untouched'),store.file);await assert.rejects(store.load(validateConfig(config)),/symlink/);
   assert.equal(await readFile(path.join(outside,'untouched'),'utf8'),'sentinel');
+});
+
+
+test('state binding ignores polling cadence and semantic configuration ordering',()=>{
+  const cfg=validateConfig({...config,authorizedUsers:['owner','reviewer']});
+  const state=newState(cfg);state.enabled=true;state.pending={id:'NOTICE',changes:[{issueId:'I1',number:1,kind:'changed'}]};
+  const reordered=validateConfig({...cfg,pollIntervalMs:60000,authorizedUsers:['reviewer','owner','owner'],
+    statusField:{options:Object.fromEntries(Object.entries(cfg.statusField.options).reverse().map(([stage,option])=>
+      [stage,{name:option.name,id:option.id}])),name:cfg.statusField.name,id:cfg.statusField.id}});
+  assert.deepEqual(validateState(state,reordered),state);
+  assert.ok(!Object.hasOwn(state,'owner'),'ownership is part of the one scope fingerprint');
+});
+test('state binding still rejects every owner, authorization and status mapping change',()=>{
+  const cfg=validateConfig(config);const state=newState(cfg);
+  const changed=[{repository:'another/repo'},{projectId:'PVT_other'},{mainSessionId:'other-manager'},
+    {authorizedUsers:['owner','another-author']},{statusField:{...cfg.statusField,id:'OTHER_FIELD'}},
+    {statusField:{...cfg.statusField,name:'Renamed status'}},
+    {statusField:{...cfg.statusField,options:{...cfg.statusField.options,done:{id:'OTHER_DONE',name:'Done'}}}},
+    {statusField:{...cfg.statusField,options:{...cfg.statusField.options,done:{id:'done',name:'Finished'}}}}];
+  for(const change of changed)assert.throws(()=>validateState(state,validateConfig({...cfg,...change})),/scope\/schema/);
+});
+test('matching legacy state keeps receipts, pause and cursors while dropping duplicate owner data',()=>{
+  const cfg=validateConfig(config);const legacy={...newState(cfg),scope:digest(cfg),
+    owner:{projectId:cfg.projectId,repository:cfg.repository,mainSessionId:cfg.mainSessionId},enabled:true,paused:true,
+    observed:{I1:{hash:'unchanged',number:1,statusId:'ready'}},
+    pending:{id:'NEXT',changes:[{issueId:'I2',number:2,kind:'added'}]},
+    delivery:{id:'SENT',changes:[{issueId:'I1',number:1,kind:'changed'}]},ownComments:{C1:{hash:'comment',author:'owner'}}};
+  const before=structuredClone(legacy);const current=validateState(legacy,cfg);
+  assert.deepEqual(legacy,before,'loading must not mutate the input record');
+  const {owner,scope,...preserved}=legacy;
+  assert.deepEqual(current,{...preserved,scope:newState(cfg).scope});
+  assert.deepEqual(validateState(current,validateConfig({...cfg,pollIntervalMs:5000})),current);
+});
+test('legacy state cannot bypass authorization or timing uncertainty with a matching owner tuple',()=>{
+  const cfg=validateConfig(config);const legacy={...newState(cfg),scope:digest(cfg),
+    owner:{projectId:cfg.projectId,repository:cfg.repository,mainSessionId:cfg.mainSessionId}};
+  // The old hash includes its interval but did not store that interval separately.
+  for(const change of [{pollIntervalMs:5000},{authorizedUsers:['owner','another-author']}])
+    assert.throws(()=>validateState(legacy,validateConfig({...cfg,...change})),/scope\/schema/);
 });

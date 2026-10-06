@@ -4,8 +4,7 @@ import { mkdtemp,mkdir,writeFile,rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { registerGitHubProject } from '../extensions/github-project/pi-host.mjs';
-import { MemoryState } from '../extensions/github-project/state.mjs';
-import { config,FakeGitHub,ManualClock,deferred,project } from './fakes.mjs';
+import { MemoryState,config,FakeGitHub,ManualClock,deferred,project } from './fakes.mjs';
 
 const Type={Object:properties=>({type:'object',properties}),String:()=>({type:'string'}),Boolean:()=>({type:'boolean'}),
   Null:()=>({type:'null'}),Literal:constValue=>({const:constValue}),Union:anyOf=>({anyOf}),Optional:value=>value};
@@ -36,7 +35,8 @@ async function setup(t,{id=config.mainSessionId,flag=true,manager=true}={}){
 }
 test('factory registers only tools/handlers; no resources or GitHub read before session_start',async t=>{
   const f=await setup(t);assert.equal(f.github.fetches,0);assert.equal(f.clock.jobs.size,0);
-  assert.deepEqual([...f.pi.tools.keys()],['github_project_read','github_issue_read','github_issue_comment','github_project_status','github_project_watch']);
+  assert.deepEqual([...f.pi.tools.keys()],['github_project_read','github_issue_comment','github_project_status','github_project_watch']);
+  assert.equal(f.pi.handlers.has('agent_end'),false);
   await f.pi.emit('session_start',f.ctx,{reason:'startup'});assert.equal(f.github.fetches,1);assert.equal(f.pi.sent.length,1);
   f.pi.receive();await f.pi.emit('agent_settled',f.ctx);assert.equal(f.store.value.delivery,null);
 });
@@ -61,7 +61,7 @@ test('reload stops prior generation; stale delayed responses cannot notify new r
   const f=await setup(t);await f.pi.emit('session_start',f.ctx);f.pi.receive();await f.pi.emit('agent_settled',f.ctx);
   const old=f.extension.controller;const waiting=deferred();const original=f.github.fetchProject.bind(f.github);
   let delayed=true;f.github.fetchProject=async()=>{if(delayed){delayed=false;return waiting.promise;}return original();};
-  const poll=old.serial(()=>old.observe(old.abort.signal));await new Promise(r=>setImmediate(r));
+  const poll=old.serial(()=>old.observe());await new Promise(r=>setImmediate(r));
   const reload=f.pi.emit('session_start',f.ctx,{reason:'reload'});waiting.resolve(project());
   await assert.rejects(poll,/bound|lifecycle/);await reload;
   assert.notEqual(f.extension.controller,old);assert.equal(f.clock.jobs.size,1);assert.equal(f.pi.sent.length,1);
@@ -85,17 +85,60 @@ test('notification uses public user path and remains queued until persisted user
 });
 test('agent_settled drains existing batch without polling GitHub; stop persists pause',async t=>{
   const f=await setup(t);f.ctx.idle=false;await f.pi.emit('session_start',f.ctx);assert.equal(f.pi.sent.length,0);
-  f.ctx.idle=true;await f.pi.emit('agent_settled',f.ctx);assert.equal(f.pi.sent.length,1);assert.equal(f.github.fetches,1);
+  f.ctx.idle=true;await f.pi.emit('agent_end',f.ctx);assert.equal(f.pi.sent.length,0);
+  await f.pi.emit('agent_settled',f.ctx);assert.equal(f.pi.sent.length,1);assert.equal(f.github.fetches,1);
   const result=await f.execute('github_project_watch',{action:'stop'});assert.equal(result.details.paused,true);assert.equal(f.clock.jobs.size,0);
   await f.pi.emit('session_start',f.ctx,{reason:'reload'});assert.equal(f.github.fetches,1);
 });
 test('Manager capability loss stops timer; tools cannot bypass lost role',async t=>{
   const f=await setup(t);await f.pi.emit('session_start',f.ctx);f.pi.active=['agent_delegate'];
-  await f.pi.emit('tool_result',f.ctx);assert.equal(f.clock.jobs.size,0);await assert.rejects(f.execute('github_issue_read',{issueId:'I1'}),/Manager tools/);
+  await f.pi.emit('tool_result',f.ctx);assert.equal(f.clock.jobs.size,0);await assert.rejects(f.execute('github_project_read',{issueId:'I1'}),/Manager tools/);
 });
 test('configuration edits require explicit reload reconciliation and cannot broaden active scope',async t=>{
   const f=await setup(t);await f.pi.emit('session_start',f.ctx);
   await writeFile(path.join(f.cwd,'.pi','github-project.json'),JSON.stringify({...config,repository:'other/repo'}));
-  await assert.rejects(f.execute('github_project_read'),/Configuration changed/);assert.equal(f.clock.jobs.size,0);
-  await f.pi.emit('session_start',f.ctx,{reason:'reload'});assert.equal(f.github.fetches,1);assert.equal(f.pi.sent.length,1);
+  const active=(await f.execute('github_project_read')).details;assert.equal(active.id,config.projectId);
+  assert.equal(f.extension.controller.config.repository,config.repository);assert.equal(f.clock.jobs.size,1);
+  const fetches=f.github.fetches;
+  await f.pi.emit('session_start',f.ctx,{reason:'reload'});
+  await assert.rejects(f.execute('github_project_read'),/scope\/schema/);
+  assert.equal(f.github.fetches,fetches);assert.equal(f.pi.sent.length,1);assert.equal(f.clock.jobs.size,0);
+});
+
+test('one read tool returns board or complete Issue without exposing internal bookkeeping',async t=>{
+  const f=await setup(t);await f.pi.emit('session_start',f.ctx);
+  f.github.externalComment('full external comment','EXTERNAL');
+  const board=(await f.execute('github_project_read')).details;
+  assert.equal(board.issues.length,1);assert.equal('comments' in board.issues[0],false);
+  const issue=(await f.execute('github_project_read',{issueId:'I1'})).details;
+  assert.equal(issue.comments[0].body,'full external comment');assert.equal(typeof issue.revision,'string');
+  for(const value of [board.issues[0],issue]) {
+    assert.equal('ownCommentIds' in value,false);assert.equal('observation' in value,false);
+  }
+  await f.execute('github_issue_comment',{issueId:issue.id,expectedRevision:issue.revision,requestId:'result',body:'Reviewed'});
+  const after=(await f.execute('github_project_read',{issueId:'I1'})).details;
+  assert.equal(after.comments.length,2,'own comments remain readable');
+  assert.equal('ownCommentIds' in after,false);assert.equal('observation' in after,false);
+  await assert.rejects(f.execute('github_project_read',{issueId:'FOREIGN'}),/outside configured/);
+  await assert.rejects(f.execute('github_project_read',{issueId:''}),/outside configured/);
+});
+test('configuration formatting is ignored until reload and constructor rejects invalid config',async t=>{
+  const f=await setup(t);await f.pi.emit('session_start',f.ctx);const first=f.extension.controller;
+  await writeFile(path.join(f.cwd,'.pi','github-project.json'),JSON.stringify(config,null,2));
+  await f.pi.emit('before_agent_start',f.ctx);assert.equal(f.extension.controller,first);assert.equal(f.clock.jobs.size,1);
+  await f.pi.emit('session_start',f.ctx,{reason:'reload'});assert.notEqual(f.extension.controller,first);assert.equal(f.clock.jobs.size,1);
+  await writeFile(path.join(f.cwd,'.pi','github-project.json'),JSON.stringify({...config,token:'not-allowed'}));
+  await f.pi.emit('session_start',f.ctx,{reason:'reload'});
+  await assert.rejects(f.execute('github_project_read'),/Unknown configuration key/);assert.equal(f.clock.jobs.size,0);
+});
+
+test('watch retry republishes only an unconfirmed notice and keeps its receipt ID',async t=>{
+  const f=await setup(t);await f.pi.emit('session_start',f.ctx);
+  const first=f.pi.sent[0].text;
+  await f.execute('github_project_watch',{action:'status'});assert.equal(f.pi.sent.length,1);
+  await f.execute('github_project_watch',{action:'retryNotice'});assert.equal(f.pi.sent.length,2);
+  assert.equal(f.pi.sent[1].text,first);
+  f.pi.receive();await f.pi.emit('agent_settled',f.ctx);
+  await f.execute('github_project_watch',{action:'retryNotice'});assert.equal(f.pi.sent.length,2);
+  assert.equal(f.store.value.delivery,null);
 });

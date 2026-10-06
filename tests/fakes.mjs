@@ -1,6 +1,12 @@
 import { clone } from '../extensions/github-project/domain.mjs';
-import { MemoryState } from '../extensions/github-project/state.mjs';
+import { newState, validateState } from '../extensions/github-project/state.mjs';
 import { ProjectController } from '../extensions/github-project/controller.mjs';
+
+export class MemoryState {
+  constructor(value = null) { this.value = value; }
+  async load(config) { return this.value ? validateState(this.value, config) : newState(config); }
+  async save(state) { this.value = clone(state); }
+}
 
 export const config = {repository:'example/repo', projectId:'PVT_test', mainSessionId:'manager-session', authorizedUsers:['owner'],
   pollIntervalMs:1000, statusField:{id:'FIELD',name:'Status',options:{ready:{id:'ready',name:'Todo'},
@@ -55,5 +61,5 @@ export function fixture({github=new FakeGitHub(), store=new MemoryState(),host=n
 }
 export const start = f => f.controller.start({selectOwner:true});
 export async function settle(f) {f.host.acknowledge();await f.controller.idle();}
-export async function observe(f) {await f.controller.serial(()=>f.controller.observe(f.controller.abort.signal));}
+export async function observe(f) {await f.controller.serial(()=>f.controller.observe());}
 export function deferred() {let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};}

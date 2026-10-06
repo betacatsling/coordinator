@@ -11,7 +11,7 @@ import { config, connection, item, ManualClock } from './fakes.mjs';
 // Two independent Pi API facades model two fixed Manager sessions. This is an
 // offline extension test, not proof of Termius, Herdr leases or native workers.
 const Type = {Object:properties=>({type:'object', properties}), String:()=>({type:'string'}),
-  Null:()=>({type:'null'}), Literal:value=>({const:value}), Union:anyOf=>({anyOf})};
+  Null:()=>({type:'null'}), Literal:value=>({const:value}), Union:anyOf=>({anyOf}), Optional:value=>value};
 const managerTools = ['staff_delegate', 'staff_resume', 'staff_message', 'staff_list'];
 const noticeId = text => text.match(/\[pi-github-notice:([^\]]+)\]/)[1];
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -197,7 +197,7 @@ test('simultaneous Project and comment pagination keeps every cursor and reposit
     const issueCalls=backend.calls.filter(call=>call.variables.owner===owner && call.variables.name===name);
     assert.deepEqual(issueCalls.map(call=>call.variables), [1,2].flatMap(number=>[
       {owner,name,number}, {owner,name,number,cursor:`${own.cfg.projectId}_ISSUE_${number}_COMMENT_PAGE_2`} ]));
-    const issue=(await own.execute('github_issue_read', {issueId:backend.card(own.cfg).content.id})).details;
+    const issue=(await own.execute('github_project_read', {issueId:backend.card(own.cfg).content.id})).details;
     assert.equal(issue.comments.length, 2);
     assert.ok(issue.comments.every(comment=>comment.body.startsWith(own.cfg.projectId)));
   }
@@ -260,9 +260,9 @@ test('foreign repository Issue reads and mutations are rejected before any remot
   const {sessions:[a,b], backend}=await pair(t); await startBoth([a,b]);
   for (const [own, other] of [[a,b],[b,a]]) {
     const ownId=backend.card(own.cfg).content.id, foreignId=backend.card(other.cfg).content.id;
-    const local=(await own.execute('github_issue_read', {issueId:ownId})).details;
-    const foreign=(await other.execute('github_issue_read', {issueId:foreignId})).details;
-    await assert.rejects(own.execute('github_issue_read', {issueId:foreignId}), /outside configured/);
+    const local=(await own.execute('github_project_read', {issueId:ownId})).details;
+    const foreign=(await other.execute('github_project_read', {issueId:foreignId})).details;
+    await assert.rejects(own.execute('github_project_read', {issueId:foreignId}), /outside configured/);
     await assert.rejects(own.execute('github_issue_comment', {issueId:foreignId, expectedRevision:foreign.revision,
       requestId:'foreign', body:'must not write'}), /Read current Issue/);
     await assert.rejects(own.execute('github_project_status', {issueId:foreignId, expectedRevision:foreign.revision,
@@ -283,7 +283,7 @@ test('two Projects in the same repository still reject each other\'s Issue membe
   const {sessions:[a,b], backend}=await pair(t, {sameRepository:true}); await startBoth([a,b]);
   for (const [own, other] of [[a,b],[b,a]]) {
     const foreignId=backend.card(other.cfg).content.id;
-    await assert.rejects(own.execute('github_issue_read', {issueId:foreignId}), /outside configured/);
+    await assert.rejects(own.execute('github_project_read', {issueId:foreignId}), /outside configured/);
     assert.ok(Object.keys((await own.state()).observed).every(id=>id.startsWith(own.cfg.projectId)));
     assertOwnNotices(own,other);
   }
@@ -292,7 +292,7 @@ test('two Projects in the same repository still reject each other\'s Issue membe
 
 test('parallel authorized fake writes preserve exact Project/item/status IDs and separate retry records', async t=>{
   const {sessions:[a,b], backend}=await pair(t); await startBoth([a,b]); await acknowledgeBoth([a,b]);
-  const reads=await Promise.all([a,b].map(own=>own.execute('github_issue_read', {issueId:backend.card(own.cfg).content.id})));
+  const reads=await Promise.all([a,b].map(own=>own.execute('github_project_read', {issueId:backend.card(own.cfg).content.id})));
   await Promise.all([a,b].map((own,index)=>own.execute('github_issue_comment', {
     issueId:reads[index].details.id, expectedRevision:reads[index].details.revision,
     requestId:'same-request-id', body:`Reviewed ${own.cfg.projectId}`})));
