@@ -1,0 +1,25 @@
+{
+  "passed": true,
+  "piVersion": "1.0.2",
+  "herdrVersion": "0.9.3",
+  "herdsmanVersion": "0.21.0",
+  "actualPiCLI": true,
+  "actualHerdrPTY": true,
+  "nativeManagerRole": true,
+  "requiredStaffTools": [
+    "staff_delegate",
+    "staff_resume",
+    "staff_message",
+    "staff_list"
+  ],
+  "firstReadNotice": true,
+  "busyCoalesced": true,
+  "persistedNotices": 2,
+  "beforeAgentStartHooks": 2,
+  "managerCharter": true,
+  "unchangedNoDuplicate": true,
+  "localFauxCalls": 2,
+  "remoteModelCalls": 0,
+  "github": "fixture only",
+  "delegations": 0
+}

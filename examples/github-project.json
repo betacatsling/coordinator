@@ -1,0 +1,17 @@
+{
+  "repository": "example/repo",
+  "projectId": "PVT_REPLACE_WITH_PROJECT_NODE_ID",
+  "mainSessionId": "REPLACE_WITH_EXACT_EXISTING_MANAGER_SESSION_ID",
+  "authorizedUsers": ["your-github-login"],
+  "pollIntervalMs": 30000,
+  "statusField": {
+    "id": "PVTSSF_REPLACE_WITH_FIELD_ID",
+    "name": "Status",
+    "options": {
+      "ready": { "id": "READY_OPTION_ID", "name": "Todo" },
+      "inProgress": { "id": "PROGRESS_OPTION_ID", "name": "In progress" },
+      "inReview": { "id": "REVIEW_OPTION_ID", "name": "In review" },
+      "done": { "id": "DONE_OPTION_ID", "name": "Done" }
+    }
+  }
+}

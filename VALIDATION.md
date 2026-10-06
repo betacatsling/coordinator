@@ -1,89 +1,43 @@
-# Validation — fresh-only candidate
+# Validation
 
-Validated in the cloud on 2026-10-05. This acceptance-simplified candidate is not deployed. The workflow uses one chosen native coordinator, one local dashboard-and-notification service and direct delegation MCP tools.
+The fixed source passed 55/55 offline Node tests on macOS. Publication checks
+rerun `npm test` and the release hygiene scan. CI runs those checks on Node 22
+and 24 on Linux. These tests use fake Pi/GitHub and need no credentials/network.
 
-## Tested
+```sh
+npm test
+node scripts/scan-release.mjs
+node tests/pi-loader-smoke.mjs <existing-pi-package-directory>
+```
 
-The final integrated suite ran **227 tests: 226 passed, one skipped**. The skipped exited-process probe requires a native Windows kernel. Python compilation, `scan_release.py` and `git diff --check` also passed.
+The optional loader check previously passed against Pi 1.0.2: one TypeScript
+extension, five tools, schema acceptance/rejection, no live session. Publication
+reruns this against the existing Pi installation without installing dependencies.
 
-Coverage includes native-session binding, board filtering and title-only inputs, six MCP tool contracts, detached workers, concurrency and ownership, original-session recovery, stale-result retirement, Git-change/check verification, GitHub write-back fixtures, private HTML reports, isolated preview/download restrictions and dashboard startup/navigation contracts.
+The source's isolated native CLI/Herdr PTY fixture passed with Pi 1.0.2,
+PiHerdsman 0.21.0 and Herdr 0.9.3. It checked native Manager tools and charter,
+first-read notification, busy coalescing, two persisted notices, two role hooks,
+and silent unchanged polls. It used two local Faux responses, zero remote
+model calls, fake GitHub and zero delegations. The portable result summary is
+[tests/herdsman-real-report.json](tests/herdsman-real-report.json); the opt-in
+fixture is [tests/herdsman-cli-fixture.ts](tests/herdsman-cli-fixture.ts).
+That native fixture is source-validation evidence, not rerun by public CI.
 
-Acceptance regression tests cover scoped tracked/new/empty/binary Git changes, changes made after review or during checks, failed recorded checks, accepted dependencies and a concise summary with no separate report argument. Execution records no longer contain a per-file artifact/hash inventory. Ownership, task/attempt identity, path-scope and stale-result protections remain covered.
+Tests cover session ownership, lifecycle cancellation, scope/mapping checks,
+pagination, stale revisions, authenticated-author gating on every mutation,
+comment retries, durable notice receipts, restart recovery, coalescing,
+private atomic state and symlink rejection.
 
-The final suite includes the CI fixture teardown-race fix: tests wait for detached workers to finish persisting notification outcomes before deleting temporary state. This is test-lifecycle hardening, not evidence of live notification delivery.
+## Remaining limits
 
-Before acceptance simplification, the integrated baseline was 221 tests: 220 passed and one skipped.
-
-Twelve cross-component cases exercise real durable files and locks, bootstrap binding, the watcher loop, worker outcome/notice transactions and dashboard reads. They cover silent baseline → changed board input → queue → worker completion → review by the same coordinator; repeated init/stop/restart; both-outbox deduplication; outages; lost acknowledgements; queue rejection; crash recovery; failed review; binding/configuration drift; and redacted status. Native queue, GitHub, process startup and worktree boundaries in these cases are fixtures. They do not establish live wakeup or execution.
-
-Before this integration, the recorded baseline was 170 tests: 169 passed and one skipped.
-
-Before notification integration, a separate Linux fixture smoke verified a real detached dashboard process, HTTP page serving, automatic fallback from an occupied preferred port, headless reuse and `--no-open` server startup. Browser-open deduplication and macOS/Windows desktop detection were tested with mocks; this is not native browser or native macOS/Windows validation.
-
-Browser-based validation remains blocked in this environment; backend and DOM-contract tests are not a successful live-browser run. No native macOS or Windows end-to-end validation is claimed.
-
-Run: `python3 -m unittest discover -s tests -v`
-
-MCP startup no longer requires `CODEX_THREAD_ID`. Real stdio fixture tests cover identity-free initialization/discovery, per-call host `_meta.threadId`, missing/malformed/mismatched identity rejection, configuration changes, and detached-worker identity propagation. These fixture tests cover protocol and authorization behavior; the separate installed-host check below verifies native metadata propagation.
-
-## Installed Codex host smoke test
-
-On 2026-10-05, the opt-in `python3 tests/codex_host_smoke.py` passed all five checks against installed Codex CLI 0.159.2:
-
-1. Actual host MCP initialization, tool discovery and tool call
-2. Host-generated `_meta.threadId` matches the actual ephemeral thread
-3. MCP server has no `CODEX_THREAD_ID` environment variable
-4. The bound thread successfully reads a fixture task
-5. A second actual host-created thread is rejected
-
-The harness uses temporary fixture state, a credential-free isolated `CODEX_HOME`, and the native app-server `mcpServer/tool/call` API. It requests no model turn, GitHub call or executor launch, and changes no global configuration. IDs come from `thread/start`; no identity is fabricated or inserted into MCP metadata. `environments: []` disables unrelated shell execution for these test threads. Requires an installed Codex CLI with this experimental API; use `--codex PATH` if it is not on PATH. Captured metadata remains temporary and is deleted after the run.
-
-## Not yet verified live
-
-This acceptance-simplified candidate has not been installed or activated on a user host. Live GitHub mutation, native desktop notification delivery and complete model-driven execution still require a controlled end-to-end run. The installed-host smoke test verifies MCP identity routing only, not model-driven coordinator or executor behavior. Reports are local files; hosted report links are not implemented in the new service. Accepted worktrees remain unmerged.
-
-Fresh initialization uses `.project-delegation/runtime`. Existing repository files, running agents and unrelated state are not deleted or terminated. Stop competing automation explicitly before activating the local service.
-
-Public macOS release verification ran 227 tests in 19.772 seconds: 225 passed and two platform-specific cases were skipped (native Windows kernel and Linux process-exit descriptors). The implementation task reported Linux 226 passed and one Windows skip, plus ten repeated teardown-regression runs totaling 250 passing test executions. Release hygiene, JavaScript syntax and whitespace checks passed. No personal installation or live project state changed during publication.
-
-## Previous unified-service release observations
-
-These are earlier verification records and do not claim deployment or live validation of the acceptance-simplified code. The previous Mac release suite passed 220 of 221 tests with one skip; its Linux CI failed during temporary-fixture cleanup, which this revision addresses.
-
-## Additional host observations
-
-The implementation task reported 221 tests on both macOS and Linux (220 passed, one Windows-kernel skip), five credential-free native-host identity checks and synthetic idle-thread notification delivery. Private project paths, native IDs, credentials and task contents are omitted. Publishing this repository does not migrate or operate an installed service.
-
-## Earlier published verification (historical)
-
-The following records describe earlier commits, not a fresh result for every current component.
-
-Public macOS release verification: all 106 tests passed in 8.437 seconds using temporary fixtures. Release hygiene and whitespace checks passed. Only the public source checkout changed; installed skills, live project files, sessions and state were untouched.
-
-## Windows portability candidate — 2026-10-05
-
-Mac release verification ran 131 tests in 9.208 seconds: 130 passed and one real-Windows-kernel case was skipped. The implementation task reported the same total and skip on Linux. Coverage adds Windows lock/process/path/UTF-8 boundaries and the configured official app-server proxy byte relay, using deterministic subprocess fixtures on POSIX. Release hygiene and whitespace checks passed.
-
-Native Windows kernel/runtime integration and live Windows or WSL2 Codex end-to-end operation remain unverified. See [Windows transport requirements and evidence](references/windows-transport.md). This publication changed only the public source checkout; no personal skill installation, project configuration or service was modified.
-
-## Read-only WebUI — 2026-10-05
-
-Mac release verification ran 140 tests in 11.870 seconds: 139 passed and one real-Windows-kernel case was skipped. Dashboard fixtures use canonical temporary paths on macOS. JavaScript syntax, release hygiene and whitespace checks passed. DOM contract tests consume the real backend data shape but use a DOM stub.
-
-A separate CLI HTTP smoke used two explicitly synthetic temporary projects and an ephemeral IPv4 loopback port. HTML/CSS/JS, the two-project catalog, five saved tasks/executors and rejection of POST with HTTP 405 passed. The owned temporary server was stopped after testing. No live user project, installed skill or MCP configuration was read or changed.
-
-Actual browser rendering, desktop/mobile visual layout, dark-theme rendering and browser interaction have not been verified. The optional browser smoke script requires separately installed Playwright; no software was installed for this release. Saved status is not proof of worker liveness, and report downloads are not proof of acceptance.
-
-## MCP handshake and host identity — 2026-10-05
-
-MCP discovery no longer depends on a thread environment variable. Business calls require the host-owned per-request `_meta.threadId`, checked against the existing binding and scope; missing/malformed/mismatched metadata returns a tool error without exiting. The MCP adapter does not fall back to the server environment or accept a model-supplied identity argument.
-
-Mac release verification ran 144 tests in 12.518 seconds: 143 passed and one real-Windows-kernel case was skipped. Release hygiene, JavaScript syntax and whitespace checks passed. Previous WebUI and 106-test historical evidence above is retained.
-
-The implementation task reported five installed-host checks passing with Codex 0.159.2. This release independently passed all five on macOS with installed Codex 0.160.0: actual initialize/list/call sequence; host-supplied matching thread metadata; no CODEX_THREAD_ID in the MCP process; a fixture read by the bound thread; and rejection of a second actual ephemeral host thread. Run the opt-in harness with `python3 tests/codex_host_smoke.py --codex PATH`.
-
-The harness uses credential-free temporary CODEX_HOME/state and a separate owned stdio test host, leaving the existing daemon unchanged. It requests no model turn, GitHub call or executor launch. These checks do not establish model-driven execution, live write-back, native notifications or browser rendering. No installed skill or real project state was changed during publication.
-
-## Installation guide and offline example — 2026-10-05
-
-The installation guide and standalone synthetic-data dashboard demo are included and linked from both READMEs. Mac verification ran 144 tests in 12.391 seconds (143 passed, one Windows-kernel test skipped), including the executor receipt lock using the shared cross-platform helper. Both embedded demo scripts and WebUI scripts passed JavaScript syntax checks; release hygiene and whitespace checks passed. No browser visual validation or native Windows E2E is claimed. No installation or deployment was performed.
+- No real model task decomposition, Lead/Agent assignment or production session
+  was tested. The extension itself never dispatches work.
+- No live GitHub permissions, rate limits, Project mapping or mutation was tested.
+- A crash before transcript persistence can repeat a notice; local state is not
+  a cross-process lock. Run one owner process per Project.
+- GitHub comments and status writes are independent. Local atomic replacement
+  is not a transaction spanning GitHub and Pi.
+- Scope/mapping changes fail closed and require explicit reconciliation.
+- The declared Pi minimum is 1.0.1; only Pi 1.0.2 was used for the loader/native
+  fixture. Windows native integration and unattended reboot recovery are untested.
+- No production installation or deployment is part of this release.

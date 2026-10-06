@@ -1,13 +1,4 @@
-__pycache__/
-*.pyc
 node_modules/
-.project-delegation/
-reports/
-DELEGATION-RESULTS.md
-.env
-.env.*
+.pi/
 *.log
 .DS_Store
-
-!examples/simple-two-task-demo/reports/
-!examples/simple-two-task-demo/reports/report.html

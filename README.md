@@ -1,54 +1,170 @@
-# project-delegation
+# project-delegation — Pi GitHub Project extension
 
-Use your chosen native Codex session to read the project, dispatch independent persistent executors and review their work. [中文](README.zh-CN.md)
+One Pi extension and one short Manager skill. The extension reads a single
+GitHub Project, observes Issue/status/comment changes, wakes its fixed Manager
+session and provides scoped GitHub tools. The Manager decides what to delegate,
+reviews native Herdsman handoffs and writes concise results to the original Issue.
 
-## Start
+This is a development candidate. No production installation or live dispatch was
+performed. It contains no Codex AppServer, MCP server, plugin compatibility
+layer, worker launcher, supervisor, HTML renderer or separate polling service.
 
-Tell your chosen session: **Be this project's coordinator using /absolute/project.json**.
+## Runtime and ownership
 
-With setup complete, it verifies this session, starts or reuses notifications and the local dashboard, reads `tasks_list`, dispatches independent executors, then ends its turn until a completion notice prompts review. Board changes reach the same coordinator session.
+Use Node >=22.19, Pi >=1.0.1 and the separately managed Pi Herdsman v0.21.0 /
+Herdr >=0.9.3 stack. Herdsman provides `staff_delegate`, `staff_resume`,
+`staff_message`, `staff_stop`, `staff_list` and `staff_inspect`. The extension
+uses none of its internal RPCs. Manager → branch Lead → Agent is sufficient;
+Chief is optional. Dependencies were prepared separately in isolated prefixes; this extension
+does not install runtimes or alter global Pi settings. SSH disconnect persistence belongs to Herdsman/Herdr; machine reboot
+does not guarantee unattended restoration.
 
-Notifications supply input; the coordinator still plans, requests corrections and accepts verified outcomes. Service health, queued input, a started or completed coordinator turn and task acceptance are separate facts.
+The `gh` executable owns existing GitHub authentication. This extension never
+reads, copies or prints credentials. Its transport calls `gh api --hostname
+github.com graphql --input -` with JSON variables on stdin, never a shell
+command assembled from Issue content.
 
-## Setup
+To prepare a later reviewed trial, put the reviewed configuration in the target
+workspace's `.pi/github-project.json`; use [examples/github-project.json](examples/github-project.json).
+Record the exact existing Manager session ID from Pi, not a worker or fork ID.
+After separately entering Herdsman Manager mode, first launch that existing
+session with this extension and the explicit `--github-project-manager` flag.
+The package manifest exposes only `extensions/github-project/index.ts` and the
+short skill. Do not install pi-subagents alongside this workflow.
 
-Use Python 3.9+, Node.js 26+, authenticated Codex and GitHub CLIs, and separately installed [mcp-agents](https://github.com/thomaswitt/mcp-agents). All runtime components and the chosen coordinator's shared native AppServer belong on the same machine.
+The watcher starts only when all of these hold: an explicit initial flag or a
+persisted enabled owner record; the exact configured session ID; and active
+`staff_delegate`, `staff_resume`, `staff_message`, `staff_list` tools. This
+capability check does not claim to prove Herdsman's internal Manager lease.
+Lead/Agent/new/fork sessions cannot poll or use these GitHub tools, even if the
+extension or flag is inherited. Restoring the same session can use only
+`--session`; it does not need the enable flag again.
 
-1. Follow [installation](references/installation.md) to install the skill and executor dependency
-2. Review [the example configuration](assets/fresh-config.example.json), supplying the repository, Project, authorized user, exact board mappings and executor permissions
-3. Register `python3 /absolute/skill/scripts/delegation_mcp.py --config /absolute/project.json` using your Codex client's MCP setup and load it in the chosen session. The host must supply per-call `_meta.threadId`; never copy a thread ID into global configuration
-4. Give the one-sentence request above. The session runs `coordinator_bootstrap.py --config /absolute/project.json init` from the selected workspace and verifies a real `tasks_list` call
+## Tools
 
-Bootstrap creates or verifies the binding under `.project-delegation/runtime`; it does not install tools, create a new shared AppServer or change project configuration. Existing files elsewhere are preserved. The example disables GitHub write-back; live execution needs explicitly authorized claim writes and verified board mappings.
+| Tool | Purpose |
+| --- | --- |
+| `github_project_read` | Read current scoped cards/statuses and statuses. |
+| `github_issue_read` | Read the full current Issue and all comments; return revision and source authority labels. |
+| `github_issue_comment` | Add an ordinary comment, with a stable request ID for retry. |
+| `github_project_status` | Write an explicitly mapped status; comment and status writes are independent. |
+| `github_project_watch` | Inspect/start/stop the in-process watcher, or explicitly retry an unconfirmed notice. |
 
-The dashboard opens in the default browser when a local desktop is detected. `--no-open` suppresses browser opening, while the local service still starts. Use the returned URL; [remote access](references/web-dashboard.md) needs a private tunnel arranged separately.
+The Manager must call `github_issue_read` before comment or status writes.
+Pass its `revision` as `expectedRevision` and the current `statusId` as
+`expectedStatusId` for status writes. Changes invalidate stale writes. A status
+write only changes status; it never posts a comment or asks for an acceptance
+boolean. The short skill instructs the Manager to review, write the result
+comment, then mark done. Comment retries reuse a stable `requestId` and an
+own-author invisible marker; forged external markers cannot satisfy recovery.
 
-Windows uses the configured `codex.exe` and official `app-server proxy` to reach the existing daemon. [Windows prerequisites and validation limits](references/windows-transport.md) include the WSL2 alternative. Full model-driven native macOS, Windows and WSL2 end-to-end operation remains unverified; observed host checks are recorded in VALIDATION.md.
+All Issues in the configured repository that belong to the selected Project
+are observable, across all statuses. Other repositories, DraftIssues and pull
+requests are excluded. This version does not interpret arbitrary saved-view
+filters or create/close Issues. Status field/option IDs and names are explicit,
+and incomplete pages or changed mappings fail closed. GitHub contents are
+untrusted task data. `authorizedUsers` labels author provenance and admits the
+authenticated write author; it does not make any comment a new user approval.
+Every remote mutation checks the current authenticated author immediately
+before writing, including every status change.
 
-## Work and review
+## Lifecycle and state
 
-`tasks_list` → `executor_start` → end this turn → completion notice → `executor_status` / `executor_result` → `executor_continue` for corrections or `task_finish` after review.
+The factory only registers APIs. `session_start` starts/reconciles the owner;
+`before_agent_start` and tool results recheck Manager capabilities after role
+activation. Shutdown, reload and session replacement abort the old request,
+invalidate its generation and stop its single self-scheduling timer. Explicit
+stop persists pause across reload. Role loss stops polling. Polling requests
+and extension read/write operations are serialized; no second poll overlaps.
 
-Up to three independent jobs can run concurrently. Dependencies use accepted job IDs and pinned receipts, without automatic patch integration. Owned paths, resources, source revisions and durable receipts guard dispatch and recovery. When all useful independent work is dispatched, yield instead of repeatedly polling or sleeping inside a tool call.
+First successful startup wakes the Manager to inspect current tasks, including
+an empty board. Thereafter unchanged content stays silent. A restored owner wakes for undelivered/new changes. The
+Manager puts the Issue URL first in native delegation task text and uses
+`staff_list`/`staff_inspect` (or `staff_transcript` for full context) to recover
+ownership before deciding to resume or delegate; the extension never dispatches work itself.
 
-An executor finishing its turn makes its result available for review. The coordinator checks the actual changes, relevant tests and task goal. The runtime collects the changes and check results; executors do not need a separate artifact manifest, file hashes or a fixed report checklist. Isolated changes still need authorized integration; nothing automatically merges, pushes, deploys or closes Issues.
+Busy sessions and pending user input hold changes in one merged batch. Once
+idle, the extension uses public `sendUserMessage(..., {deliverAs:'followUp',
+expandPromptTemplates:false})`, preserving Herdsman's `before_agent_start`
+Manager charter. Its void return is not a delivery receipt. A small in-flight
+batch retains its stable ID until that ID appears in a persisted user message
+on the current Pi branch. More changes merge into a second pending batch while
+that notice is in flight. `agent_settled` only drains existing batches.
 
-Issue updates briefly say what was done, what the checks showed and any meaningful limitation, with a report link when available. Supporting details belong in the report, without a required set of fields.
+`.pi/github-project-state.json` stores owner/enabled/pause, per-Issue hashes,
+pending/delivery metadata and own-comment hashes. It
+stores no Issue text or credentials, uses atomic replacement and mode 0600,
+and rejects symlink escapes. Own unchanged comments and confirmed own status
+writes do not cause notification loops. Configuration/scope changes require
+explicit reconciliation; this version refuses to overwrite incompatible state.
 
-Private HTML reports can be read in the dashboard's isolated static preview or downloaded, with verified GitHub links for context. JavaScript and external resources are disabled in previews. Reports have no public hosted URL.
+Delivery is crash-recoverable, not a distributed exactly-once dispatch lock.
+A crash before transcript persistence can repeat the same notice ID. Neither
+GitHub state nor the small local record is a cross-instance atomic claim.
+Run one owner process per Project. Model handoffs and acceptance remain the
+Manager's responsibility. A failed user-message preflight keeps its batch;
+after fixing the cause, use `retryNotice` or restart the bound session.
 
-Detached executors and local services may outlive an MCP connection. Preserve original sessions, worktrees and receipts until reviewed; stop only services you own and intend to stop.
+## Validation
 
-To uninstall, remove only the installed skill and MCP entries you added; preserve sessions, worktrees and private state until reviewed.
+Run `npm test`; it uses fake Pi/GitHub only, with no network or credentials.
+An optional offline loader check accepts the absolute path to an existing Pi
+package: `node tests/pi-loader-smoke.mjs /absolute/pi/package`.
+See [VALIDATION.md](VALIDATION.md) for evidence and remaining runtime limits.
 
-## Documentation and tests
+## Install and configure
 
-- [Standalone synthetic-data demo](examples/dashboard-demo.html) — download and open locally
-- [Skill workflow](SKILL.md)
-- [Coordinator tool contracts](references/coordinator-tools.md)
-- [Local dashboard and reports](references/web-dashboard.md)
-- [Validation evidence and limits](VALIDATION.md)
+Install Node, Pi, `gh`, PiHerdsman and Herdr separately using their official
+instructions in [DEPENDENCIES.md](DEPENDENCIES.md). Authenticate `gh` yourself;
+this package does not set up authentication. Clone this repository, then install
+its local Pi package:
 
-Run `python3 -m unittest discover -s tests -v` and `python3 scripts/scan_release.py`. Offline fixtures do not establish live installation, notification wakeup or GitHub write-back.
+```sh
+git clone https://github.com/betacatsling/project-delegation.git
+cd project-delegation
+npm test
+pi install .
+```
 
-MIT. See [LICENSE](LICENSE) and [THIRD_PARTY.md](THIRD_PARTY.md).
+Copy `examples/github-project.json` to `.pi/github-project.json` in your target
+workspace. Replace every placeholder with your repository, Project node ID,
+Status field/option IDs, allowed GitHub authors and exact existing Manager
+session ID. This file is configuration, not a credential file. Start from that
+workspace after activating Herdsman's Manager role:
+
+```sh
+pi --session <existing-manager-session-file> --github-project-manager
+```
+
+For subsequent resume, use the same `--session` without the enable flag. The
+extension does not create or select the Manager for you. One owner process per
+Project is required. This package has no npm runtime dependencies; Pi supplies
+the extension APIs, and PiHerdsman/Herdr remain external dependencies.
+
+## Stop and uninstall
+
+Use `github_project_watch` with `{ "action": "stop" }` to persist a pause, or
+exit Pi to stop its in-process timer. Stopping the watcher does not stop native
+Herdsman work; use `staff_stop` for work you intend to pause. Run `pi list`, then
+`pi remove <installed-source>` using the exact source it shows. Remove the
+workspace's `.pi/github-project.json` and `.pi/github-project-state.json` only
+when you intend to discard that binding and delivery history.
+
+## 中文说明
+
+这是一个 Pi 扩展和一个简短 Manager skill：读取单个 GitHub Project，合并变化后
+通知固定 Manager；Manager 用 PiHerdsman 原生工具派工、审阅结果并回写 Issue。
+依赖 Node >=22.19、Pi >=1.0.1、PiHerdsman 0.21.0、Herdr >=0.9.3 和已登录的 gh。
+依赖需另行安装，步骤见上文与 [依赖说明](DEPENDENCIES.md)。克隆仓库后运行
+`npm test`、`pi install .`，再填写目标工作区的 `.pi/github-project.json`。
+绑定既有 Manager 会话并显式启用，之后恢复同一会话即可。
+
+用 `github_project_watch` 的 stop 操作持久暂停；卸载用 `pi list` 查明来源，再运行
+`pi remove <installed-source>`。本项目没有 ChatGPT 侧栏映射、独立 WebUI 或
+旧 Codex/MCP 兼容层。尚未验证真实模型派工、真实 GitHub 写入、生产安装和重启
+后的无人值守恢复；崩溃时通知可能重放，不能当作分布式派工锁。
+
+## License
+
+MIT; see [LICENSE](LICENSE). External dependencies retain their own licenses;
+no third-party source is vendored. The public repository's Git history is retained.

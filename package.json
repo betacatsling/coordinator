@@ -1,0 +1,14 @@
+{
+  "name": "pi-project-delegation-github",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=22.19.0" },
+  "scripts": { "test": "node --test tests/*.test.mjs" },
+  "pi": {
+    "extensions": ["./extensions/github-project/index.ts"],
+    "skills": ["./skills/project-delegation"]
+  },
+  "peerDependencies": { "@earendil-works/pi-coding-agent": ">=1.0.1" }
+}
