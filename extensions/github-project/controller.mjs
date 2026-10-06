@@ -7,6 +7,7 @@ const excerpt = (value, limit = 1500) => {
   const text = String(value ?? '');
   return text.length <= limit ? text : `${text.slice(0, limit)}\n[truncated: ${text.length-limit} characters omitted; read the full Issue/comment]`;
 };
+const scopeDeparture = 'This Issue was observed outside the configured Project/repository; read current Project scope before writing.';
 const cursor = issue => ({hash:issue.observation, number:issue.number,
   title:excerpt(issue.title,240), url:issue.url, status:{id:issue.statusId,name:issue.status},
   content:digest([issue.title,issue.body,issue.state]),
@@ -123,9 +124,17 @@ export class ProjectController {
     }
     for (const [id, previous] of Object.entries(next.observed ?? {})) {
       if (!observed[id]) changes.push({issueId:id,number:previous.number,title:previous.title,url:previous.url,kind:'removed',
-        events:[{kind:'removed from scope',body:'This Issue is no longer in the configured Project/repository; it cannot be written through this extension.'}]});
+        events:[{kind:'removed from scope',body:scopeDeparture}]});
     }
     this.notice(next, changes, next.observed === null ? 'initial-reconcile' : null);
+    // Reconcile only unsent batches against this poll, including older queued
+    // notices. Historical events stay; in-flight delivery remains frozen.
+    for (const change of next.pending?.changes ?? []) {
+      if (!Object.hasOwn(observed,change.issueId)) change.kind='removed';
+      else if (change.kind === 'removed') change.kind='added';
+      for (const event of change.events ?? [])
+        if (event.kind === 'removed from scope') event.body=scopeDeparture;
+    }
     next.observed = observed;
     await this.commit(next);
     await this.flush();

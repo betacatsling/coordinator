@@ -1,8 +1,8 @@
 # Validation
 
-The publication suite passes 88/88 offline Node tests on macOS, including ten
+The publication suite passes 101/101 offline Node tests on macOS, including ten
 multi-project isolation tests, ten additional refactor regressions and thirteen
-concrete-event notification tests. The multi-project tests use
+concrete-event notification tests, plus thirteen membership regressions. The multi-project tests use
 two fake Pi Managers and a shared fake GraphQL service with real adapters and
 file-backed state, covering independent scopes, pagination, notices, receipts,
 restart recovery, writes, forks and pauses. They do not verify native multi-host
@@ -30,7 +30,7 @@ model calls, fake GitHub and zero delegations. The portable result summary is
 fixture is [tests/herdsman-cli-fixture.ts](tests/herdsman-cli-fixture.ts).
 That native fixture is historical source-validation evidence from before this
 refactor. It was not rerun for this release or by public CI; its test/result
-files remain unchanged. The current native loader and 88 offline tests passed.
+files remain unchanged. The current native loader and 101 offline tests passed.
 
 Tests cover session ownership, lifecycle cancellation, scope/mapping checks,
 pagination, stale revisions, authenticated-author gating on every mutation,
@@ -40,6 +40,9 @@ labels, added-task content, distinct comments and edits, busy coalescing, status
 round trips, author/actor distinction, external-data labels, marked truncation,
 full hashes beyond excerpt boundaries, bounded message details, scope departure,
 legacy baselines, receipt replay and clearing pending excerpts.
+Membership regressions cover busy departures/rejoins, final observed scope,
+historical departure wording, retained comments, repair of older unsent batches,
+stable receipts and frozen in-flight delivery across restarts.
 
 ## Remaining limits
 
