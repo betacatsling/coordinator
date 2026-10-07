@@ -4,11 +4,24 @@
   "private": true,
   "type": "module",
   "license": "MIT",
-  "engines": { "node": ">=22.19.0" },
-  "scripts": { "test": "node --test tests/*.test.mjs" },
-  "pi": {
-    "extensions": ["./extensions/github-project/index.ts"],
-    "skills": ["./skills/project-delegation"]
+  "engines": {
+    "node": ">=22.19.0"
   },
-  "peerDependencies": { "@earendil-works/pi-coding-agent": ">=1.0.1" }
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "console": "node console/server.mjs --demo",
+    "console:live": "node console/server.mjs --workspace .",
+    "lint": "node --check console/server.mjs && node --check console/demo.mjs && node --check console/public/app.js"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/github-project/index.ts"
+    ],
+    "skills": [
+      "./skills/project-delegation"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=1.0.1"
+  }
 }
